@@ -92,7 +92,6 @@ impl<S: NetSend, R: NetReceive> ServerNetworking<S, R> {
 			tokio::spawn(async move {
 				loop {
 					let connection = endpoint.accept().await.unwrap().await.unwrap();
-					println!("Connection accepted");
 
 					let client =
 						ClientOnServerNetworking::new(async_runtime_handle_cloned.clone(), connection);
@@ -155,14 +154,14 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 
 	// Note: Could take `impl NetSend` instead of `S`, but then it won't
 	// look like the client-side API.
-	pub fn send_message(&self, message: S) {
+	pub fn send_message_to_client(&self, message: S) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
 			send_message(&connection, message).await;
 		});
 	}
 
-	pub fn receive_message(&self) -> Option<R> {
+	pub fn receive_message_from_client(&self) -> Option<R> {
 		self.receiving_receiver.try_recv().ok()
 	}
 }
@@ -293,7 +292,6 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
 			)));
 
 			let connection = endpoint.connect(server_address, SERVER_NAME).unwrap().await.unwrap();
-			println!("connected to {}", connection.remote_address());
 
 			let connected_client =
 				ClientNetworkingConnected::new(async_runtime_handle_cloned, connection);
@@ -308,7 +306,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
 		self.connected_client_receiver.try_recv().ok().inspect(|connected_client| {
 			let pending_sent_messages = std::mem::take(&mut self.pending_sent_messages);
 			for message in pending_sent_messages.into_iter() {
-				connected_client.send_message(message);
+				connected_client.send_message_to_server(message);
 			}
 		})
 	}
@@ -347,14 +345,14 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		}
 	}
 
-	pub fn send_message(&self, message: S) {
+	pub fn send_message_to_server(&self, message: S) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
 			send_message(&connection, message).await;
 		});
 	}
 
-	pub fn receive_message(&self) -> Option<R> {
+	pub fn receive_message_from_server(&self) -> Option<R> {
 		self.receiving_receiver.try_recv().ok()
 	}
 }
@@ -375,7 +373,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 		}
 	}
 
-	pub fn send_message(&mut self, message: S) {
+	pub fn send_message_to_server(&mut self, message: S) {
 		self.connect_if_possible();
 		match &mut self.0 {
 			ClientNetworkingEnum::Connecting(connecting) => {
@@ -390,11 +388,11 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 		}
 	}
 
-	pub fn receive_message(&mut self) -> Option<R> {
+	pub fn receive_message_from_server(&mut self) -> Option<R> {
 		self.connect_if_possible();
 		match &self.0 {
 			ClientNetworkingEnum::Connecting(_connecting) => None,
-			ClientNetworkingEnum::Connected(connected) => connected.receive_message(),
+			ClientNetworkingEnum::Connected(connected) => connected.receive_message_from_server(),
 		}
 	}
 }
