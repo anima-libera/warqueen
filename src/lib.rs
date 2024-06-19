@@ -7,7 +7,8 @@ use std::{
 
 use quinn::{
 	crypto::rustls::{QuicClientConfig, QuicServerConfig},
-	ClientConfig, Connection, ConnectionError, Endpoint, RecvStream,
+	default_runtime, ClientConfig, Connection, ConnectionError, Endpoint, EndpointConfig,
+	RecvStream,
 };
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use serde::{de::DeserializeOwned, Serialize};
@@ -60,7 +61,9 @@ pub trait NetReceive: DeserializeOwned + Send + 'static {}
 /// and provide these new clients (in the form of `ClientOnServerNetworking`s)
 /// when asked for. Should be asked for in a loop.
 pub struct ServerNetworking<S: NetSend, R: NetReceive> {
+	// TODO: Remove? Seems to be unused.
 	_async_runtime_handle: Handle,
+	local_port: u16,
 	client_receiver: Receiver<ClientOnServerNetworking<S, R>>,
 }
 
@@ -72,22 +75,34 @@ impl<S: NetSend, R: NetReceive> ServerNetworking<S, R> {
 
 		let (client_sender, client_receiver) = std::sync::mpsc::channel();
 
-		let async_runtime_handle_cloned = async_runtime_handle.clone();
-		async_runtime_handle.spawn(async move {
-			let cert = rcgen::generate_simple_self_signed(vec![SERVER_NAME.into()]).unwrap();
-			let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
-			let certs = vec![cert.cert.into()];
-			let key = key.into();
+		let cert = rcgen::generate_simple_self_signed(vec![SERVER_NAME.into()]).unwrap();
+		let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+		let certs = vec![cert.cert.into()];
+		let key = key.into();
 
-			let server_crypto = rustls::ServerConfig::builder()
-				.with_no_client_auth()
-				.with_single_cert(certs, key)
-				.unwrap();
-			let server_config = quinn::ServerConfig::with_crypto(Arc::new(
-				QuicServerConfig::try_from(server_crypto).unwrap(),
-			));
-			let server_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-			let endpoint = Endpoint::server(server_config, server_address).unwrap();
+		let server_crypto = rustls::ServerConfig::builder()
+			.with_no_client_auth()
+			.with_single_cert(certs, key)
+			.unwrap();
+		let server_config = quinn::ServerConfig::with_crypto(Arc::new(
+			QuicServerConfig::try_from(server_crypto).unwrap(),
+		));
+		let server_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+		let socket = std::net::UdpSocket::bind(server_address).unwrap();
+		let actual_server_address = socket.local_addr().unwrap();
+
+		let async_runtime_handle_cloned = async_runtime_handle.clone();
+
+		async_runtime_handle.spawn(async move {
+			// Basically `Endpoint::server` except we made the socket ourselves
+			// and outside the async block so that we could get its actual port immediately.
+			let endpoint = Endpoint::new(
+				EndpointConfig::default(),
+				Some(server_config),
+				socket,
+				default_runtime().unwrap(),
+			)
+			.unwrap();
 
 			tokio::spawn(async move {
 				loop {
@@ -101,7 +116,15 @@ impl<S: NetSend, R: NetReceive> ServerNetworking<S, R> {
 			});
 		});
 
-		ServerNetworking { _async_runtime_handle: async_runtime_handle, client_receiver }
+		ServerNetworking {
+			_async_runtime_handle: async_runtime_handle,
+			local_port: actual_server_address.port(),
+			client_receiver,
+		}
+	}
+
+	pub fn server_port(&self) -> u16 {
+		self.local_port
 	}
 
 	pub fn get_client(&self) -> Option<ClientOnServerNetworking<S, R>> {

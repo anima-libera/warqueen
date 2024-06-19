@@ -21,6 +21,8 @@ impl NetReceive for MessageServerToClient {}
 fn main() {
 	let port = 21001;
 	let server = ServerNetworking::new(port);
+	let actual_port = server.server_port();
+	println!("Opened on port {actual_port}");
 
 	let mut clients = vec![];
 	let mut last_send = Instant::now();
