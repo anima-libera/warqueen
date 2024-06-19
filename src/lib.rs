@@ -1,3 +1,5 @@
+//! # Warqueen
+//!
 //! Hobby-scale small networking crate based on [Quinn](https://crates.io/crates/quinn),
 //! message based, no async, no blocking.
 //!
@@ -16,7 +18,7 @@
 //! }
 //! ```
 //!
-//! Go see the examples, they are very simple.
+//! Go see the examples, they are very simple, probably the best guide for Warqueen.
 
 use std::{
 	marker::PhantomData,
