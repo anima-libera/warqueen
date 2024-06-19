@@ -14,26 +14,30 @@ enum MessageServerToClient {
 }
 
 impl NetSend for MessageClientToServer {}
-impl NetReceive for MessageClientToServer {}
-impl NetSend for MessageServerToClient {}
 impl NetReceive for MessageServerToClient {}
 
 fn main() {
 	let server_address = "127.0.0.1:21001".parse().unwrap();
 	let mut client = ClientNetworking::new(server_address);
 
-	let mut last_send = Instant::now();
+	let mut last_sent_time = Instant::now();
+
 	loop {
+		// Handling received messages from the server.
 		while let Some(message) = client.receive_message_from_server() {
 			match message {
-				MessageServerToClient::String(string) => println!("The server says \"{string}\""),
+				MessageServerToClient::String(content) => println!("The server says \"{content}\""),
 			}
 		}
 
-		if last_send.elapsed() > Duration::from_millis(1500) {
-			last_send = Instant::now();
+		// Periodically sending a message to a client for the sake of the example.
+		if last_sent_time.elapsed() > Duration::from_millis(1500) {
+			last_sent_time = Instant::now();
+
+			// Sending a message to the server.
 			println!("We say \"jaaj\" to the server");
-			client.send_message_to_server(MessageServerToClient::String("jaaj".to_string()));
+			let message = MessageClientToServer::String("jaaj".to_string());
+			client.send_message_to_server(message);
 		}
 
 		std::thread::sleep(Duration::from_millis(10));

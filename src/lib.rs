@@ -1,3 +1,23 @@
+//! Hobby-scale small networking crate based on [Quinn](https://crates.io/crates/quinn),
+//! message based, no async, no blocking.
+//!
+//! - The server and the client are intended to run in a loop.
+//! - They can poll received messages and events when they want,
+//! and send messages when they want.
+//! - There is a message type for client-to-server messaging,
+//! and a message type for server-to-client messaging, and that is all.
+//! These two types can be enums to make up for that.
+//!
+//! ```
+//! let networking_stuff = ...;
+//! loop {
+//!     handle_networking_stuff(&mut networking_stuff);
+//!     // ...
+//! }
+//! ```
+//!
+//! Go see the examples, they are very simple.
+
 use std::{
 	marker::PhantomData,
 	net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -58,17 +78,19 @@ pub trait NetSend: Serialize + Send + 'static {}
 pub trait NetReceive: DeserializeOwned + Send + 'static {}
 
 /// A piece of server networking that establishes connections to new clients
-/// and provide these new clients (in the form of `ClientOnServerNetworking`s)
-/// when asked for. Should be asked for in a loop.
-pub struct ServerNetworking<S: NetSend, R: NetReceive> {
+/// and provides these new clients (in the form of `ClientOnServerNetworking`s)
+/// when asked for. Should be asked for in a loop, see examples.
+///
+/// `S` and `R` are the message types that can be send and received respectively.
+pub struct ServerListenerNetworking<S: NetSend, R: NetReceive> {
 	// TODO: Remove? Seems to be unused.
 	_async_runtime_handle: Handle,
 	local_port: u16,
 	client_receiver: Receiver<ClientOnServerNetworking<S, R>>,
 }
 
-impl<S: NetSend, R: NetReceive> ServerNetworking<S, R> {
-	pub fn new(port: u16) -> ServerNetworking<S, R> {
+impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
+	pub fn new(desired_port: u16) -> ServerListenerNetworking<S, R> {
 		rustls::crypto::ring::default_provider().install_default().unwrap();
 
 		let async_runtime_handle = async_runtime();
@@ -87,8 +109,9 @@ impl<S: NetSend, R: NetReceive> ServerNetworking<S, R> {
 		let server_config = quinn::ServerConfig::with_crypto(Arc::new(
 			QuicServerConfig::try_from(server_crypto).unwrap(),
 		));
-		let server_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-		let socket = std::net::UdpSocket::bind(server_address).unwrap();
+		let desired_server_address =
+			SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), desired_port);
+		let socket = std::net::UdpSocket::bind(desired_server_address).unwrap();
 		let actual_server_address = socket.local_addr().unwrap();
 
 		let async_runtime_handle_cloned = async_runtime_handle.clone();
@@ -116,22 +139,42 @@ impl<S: NetSend, R: NetReceive> ServerNetworking<S, R> {
 			});
 		});
 
-		ServerNetworking {
+		ServerListenerNetworking {
 			_async_runtime_handle: async_runtime_handle,
 			local_port: actual_server_address.port(),
 			client_receiver,
 		}
 	}
 
+	/// The port the server listens on.
+	/// Could happen to be a bit different from the desired port given at creation.
 	pub fn server_port(&self) -> u16 {
 		self.local_port
 	}
 
-	pub fn get_client(&self) -> Option<ClientOnServerNetworking<S, R>> {
+	/// If new clients are connected to the server, then returns one of them.
+	///
+	/// # Examples
+	///
+	/// ```
+	/// # let port = 21001;
+	/// let server = ServerNetworking::new(port);
+	///
+	/// loop {
+	///     while let Some(new_client) = server.poll_client() {
+	///         // Add the client to a list or something...
+	///     }
+	///     // ...
+	/// }
+	/// ```
+	pub fn poll_client(&self) -> Option<ClientOnServerNetworking<S, R>> {
 		self.client_receiver.try_recv().ok()
 	}
 }
 
+/// A connection to a client, from a server's perspective.
+///
+/// `S` and `R` are the message types that can be send and received respectively.
 pub struct ClientOnServerNetworking<S: NetSend, R: NetReceive> {
 	async_runtime_handle: Handle,
 	connection: Connection,
@@ -142,9 +185,11 @@ pub struct ClientOnServerNetworking<S: NetSend, R: NetReceive> {
 impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	fn new(async_runtime_handle: Handle, connection: Connection) -> ClientOnServerNetworking<S, R> {
 		let (receiving_sender, receiving_receiver) = std::sync::mpsc::channel();
+
 		let connection_cloned = connection.clone();
 		tokio::spawn(async move {
 			loop {
+				// TODO: Better error handling, act like a library, and no printing!
 				let mut stream = match connection_cloned.accept_uni().await {
 					Ok(stream) => stream,
 					Err(ConnectionError::ApplicationClosed(thingy)) => {
@@ -171,10 +216,28 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 		}
 	}
 
+	/// The address of the client, at the other end of this connection.
 	pub fn client_address(&self) -> SocketAddr {
 		self.connection.remote_address()
 	}
 
+	/// Just sends the given message to that client.
+	///
+	/// # Examples
+	///
+	/// ```
+	/// #[derive(Serialize, Deserialize)]
+	/// enum MessageServerToClient {
+	///     Hello,
+	///     // ...
+	/// }
+	/// impl NetSend for MessageServerToClient {}
+	///
+	/// # let server_address = "127.0.0.1:21001".parse().unwrap();
+	/// let mut client = ClientNetworking::new(server_address);
+	///
+	/// client.send_message_to_server(MessageServerToClient::Hello);
+	/// ```
 	// Note: Could take `impl NetSend` instead of `S`, but then it won't
 	// look like the client-side API.
 	pub fn send_message_to_client(&self, message: S) {
@@ -184,6 +247,32 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 		});
 	}
 
+	/// If that client has sent any new messages, returns one of them.
+	///
+	/// # Examples
+	///
+	/// ```
+	/// #[derive(Serialize, Deserialize)]
+	/// enum MessageClientToServer {
+	///     Hello,
+	///     // ...
+	/// }
+	/// impl NetReceive for MessageClientToServer {}
+	///
+	/// # let port = 21001;
+	/// # let server = ServerNetworking::new(port);
+	/// let client = server.pool_client().unwrap();
+	///
+	/// loop {
+	///     while let Some(message) = client.receive_message_from_client() {
+	///         match message {
+	///             MessageClientToServer::Hello => { /* ... */ },
+	///             // Handle the different possible message variants...
+	///         }
+	///     }
+	///     // ...
+	/// }
+	/// ```
 	pub fn receive_message_from_client(&self) -> Option<R> {
 		self.receiving_receiver.try_recv().ok()
 	}
@@ -273,6 +362,9 @@ enum ClientNetworkingEnum<S: NetSend, R: NetReceive> {
 	Connected(ClientNetworkingConnected<S, R>),
 }
 
+/// A connection to a server, from a client's perspective.
+///
+/// `S` and `R` are the message types that can be send and received respectively.
 pub struct ClientNetworking<S: NetSend, R: NetReceive>(ClientNetworkingEnum<S, R>);
 
 impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
@@ -342,6 +434,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		let connection_cloned = connection.clone();
 		tokio::spawn(async move {
 			loop {
+				// TODO: Better error handling, act like a library, and no printing!
 				let mut stream = match connection_cloned.accept_uni().await {
 					Ok(stream) => stream,
 					Err(ConnectionError::ApplicationClosed(thingy)) => {
@@ -368,14 +461,14 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		}
 	}
 
-	pub fn send_message_to_server(&self, message: S) {
+	fn send_message_to_server(&self, message: S) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
 			send_message(&connection, message).await;
 		});
 	}
 
-	pub fn receive_message_from_server(&self) -> Option<R> {
+	fn receive_message_from_server(&self) -> Option<R> {
 		self.receiving_receiver.try_recv().ok()
 	}
 }
@@ -396,6 +489,23 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 		}
 	}
 
+	/// Just sends the given message to the server.
+	///
+	/// # Examples
+	///
+	/// ```
+	/// #[derive(Serialize, Deserialize)]
+	/// enum MessageClientToServer {
+	///     Hello,
+	///     // ...
+	/// }
+	/// impl NetSend for MessageClientToServer {}
+	///
+	/// # let server_address = "127.0.0.1:21001".parse().unwrap();
+	/// let mut client = ClientNetworking::new(server_address);
+	///
+	/// client.send_message_to_server(MessageClientToServer::Hello);
+	/// ```
 	pub fn send_message_to_server(&mut self, message: S) {
 		self.connect_if_possible();
 		match &mut self.0 {
@@ -411,6 +521,31 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 		}
 	}
 
+	/// If the server has sent any new messages, returns one of them.
+	///
+	/// # Examples
+	///
+	/// ```
+	/// #[derive(Serialize, Deserialize)]
+	/// enum MessageServerToClient {
+	///     Hello,
+	///     // ...
+	/// }
+	/// impl NetReceive for MessageServerToClient {}
+	///
+	/// # let server_address = "127.0.0.1:21001".parse().unwrap();
+	/// let mut client = ClientNetworking::new(server_address);
+	///
+	/// loop {
+	///     while let Some(message) = client.receive_message_from_server() {
+	///         match message {
+	///             MessageServerToClient::Hello => { /* ... */ },
+	///             // Handle the different possible message variants...
+	///         }
+	///     }
+	///     // ...
+	/// }
+	/// ```
 	pub fn receive_message_from_server(&mut self) -> Option<R> {
 		self.connect_if_possible();
 		match &self.0 {
