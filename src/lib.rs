@@ -30,7 +30,7 @@ use std::{
 use quinn::{
 	crypto::rustls::{QuicClientConfig, QuicServerConfig},
 	default_runtime, ClientConfig, Connection, ConnectionError, Endpoint, EndpointConfig,
-	RecvStream,
+	RecvStream, VarInt,
 };
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use serde::{de::DeserializeOwned, Serialize};
@@ -202,8 +202,13 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 pub struct ClientOnServerNetworking<S: NetSend, R: NetReceive> {
 	async_runtime_handle: Handle,
 	connection: Connection,
-	receiving_receiver: Receiver<R>,
+	receiving_receiver: Receiver<ClientOnServerEvent<R>>,
 	_phantom: PhantomData<S>,
+}
+
+pub enum ClientOnServerEvent<R: NetReceive> {
+	Message(R),
+	Disconnected,
 }
 
 impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
@@ -213,22 +218,39 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 		let connection_cloned = connection.clone();
 		tokio::spawn(async move {
 			loop {
-				// TODO: Better error handling, act like a library, and no printing!
-				let mut stream = match connection_cloned.accept_uni().await {
-					Ok(stream) => stream,
-					Err(ConnectionError::ApplicationClosed(thingy)) => {
-						let aids = String::from_utf8(thingy.reason.to_vec()).unwrap();
-						println!("connection closed due to {aids}");
+				match connection_cloned.accept_uni().await {
+					Ok(mut stream) => {
+						// Received a stream, that we will read until the end
+						// to get the entire message that we can then provide to the user.
+						let receiving_sender_cloned = receiving_sender.clone();
+						tokio::spawn(async move {
+							let message_raw = receive_message_raw(&mut stream).await;
+							let message: R = rmp_serde::decode::from_slice(&message_raw).unwrap();
+							let event = ClientOnServerEvent::Message(message);
+							receiving_sender_cloned.send(event).unwrap();
+						});
+					},
+					Err(ConnectionError::ApplicationClosed(_thingy)) => {
+						// TODO: Deserialize the reason from `_thingy` and put it in the event.
+						let event = ClientOnServerEvent::Disconnected;
+						receiving_sender.send(event).unwrap();
 						return;
 					},
-					Err(error) => panic!("{error}"),
+					Err(ConnectionError::ConnectionClosed(_thingy)) => {
+						// TODO: Deserialize the reason from `_thingy` and put it in the event.
+						let event = ClientOnServerEvent::Disconnected;
+						receiving_sender.send(event).unwrap();
+						return;
+					},
+					Err(ConnectionError::LocallyClosed) => {
+						// Our own side have closed the connection, let's just wrap up as expected.
+						return;
+					},
+					Err(error) => {
+						// TODO: Handle more errors to pass as events to the user.
+						panic!("{error}");
+					},
 				};
-				let receiving_sender_cloned = receiving_sender.clone();
-				tokio::spawn(async move {
-					let message_raw = receive_message_raw(&mut stream).await;
-					let message: R = rmp_serde::decode::from_slice(&message_raw).unwrap();
-					receiving_sender_cloned.send(message).unwrap();
-				});
 			}
 		});
 
@@ -322,8 +344,12 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	///
 	/// # client.send_message_to_client(MessageServerToClient::Hello);
 	/// ```
-	pub fn receive_message_from_client(&self) -> Option<R> {
+	pub fn poll_event_from_client(&self) -> Option<ClientOnServerEvent<R>> {
 		self.receiving_receiver.try_recv().ok()
+	}
+
+	pub fn disconnect(&self) {
+		self.connection.close(VarInt::from_u32(0), &[])
 	}
 }
 
@@ -400,8 +426,13 @@ struct ClientNetworkingConnecting<S: NetSend, R: NetReceive> {
 struct ClientNetworkingConnected<S: NetSend, R: NetReceive> {
 	async_runtime_handle: Handle,
 	connection: Connection,
-	receiving_receiver: Receiver<R>,
+	receiving_receiver: Receiver<ClientEvent<R>>,
 	_phantom: PhantomData<S>,
+}
+
+pub enum ClientEvent<R: NetReceive> {
+	Message(R),
+	Disconnected,
 }
 
 enum ClientNetworkingEnum<S: NetSend, R: NetReceive> {
@@ -409,6 +440,7 @@ enum ClientNetworkingEnum<S: NetSend, R: NetReceive> {
 	/// When connected, we transition to the `Connected` variant.
 	Connecting(ClientNetworkingConnecting<S, R>),
 	Connected(ClientNetworkingConnected<S, R>),
+	Disconnected,
 }
 
 /// A connection to a server, from a client's perspective.
@@ -420,23 +452,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
 	fn new(server_address: SocketAddr) -> ClientNetworkingConnecting<S, R> {
 		rustls::crypto::ring::default_provider().install_default().unwrap();
 
-		let async_runtime = tokio::runtime::Builder::new_current_thread()
-			.thread_name("Tokio Runtime Thread")
-			.enable_time()
-			.enable_io()
-			.build()
-			.unwrap();
-		let async_runtime_handle = async_runtime.handle().clone();
-		std::thread::Builder::new()
-			.name("Tokio Runtime Thread".to_string())
-			.spawn(move || {
-				async_runtime.block_on(async {
-					loop {
-						tokio::time::sleep(Duration::from_millis(1)).await
-					}
-				})
-			})
-			.unwrap();
+		let async_runtime_handle = async_runtime();
 
 		let (connected_client_sender, connected_client_receiver) = std::sync::mpsc::channel();
 
@@ -483,22 +499,39 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		let connection_cloned = connection.clone();
 		tokio::spawn(async move {
 			loop {
-				// TODO: Better error handling, act like a library, and no printing!
-				let mut stream = match connection_cloned.accept_uni().await {
-					Ok(stream) => stream,
-					Err(ConnectionError::ApplicationClosed(thingy)) => {
-						let aids = String::from_utf8(thingy.reason.to_vec()).unwrap();
-						println!("connection closed due to {aids}");
+				match connection_cloned.accept_uni().await {
+					Ok(mut stream) => {
+						// Received a stream, that we will read until the end
+						// to get the entire message that we can then provide to the user.
+						let receiving_sender_cloned = receiving_sender.clone();
+						tokio::spawn(async move {
+							let message_raw = receive_message_raw(&mut stream).await;
+							let message: R = rmp_serde::decode::from_slice(&message_raw).unwrap();
+							let event = ClientEvent::Message(message);
+							receiving_sender_cloned.send(event).unwrap();
+						});
+					},
+					Err(ConnectionError::ApplicationClosed(_thingy)) => {
+						// TODO: Deserialize the reason from `_thingy` and put it in the event.
+						let event = ClientEvent::Disconnected;
+						receiving_sender.send(event).unwrap();
 						return;
 					},
-					Err(error) => panic!("{error}"),
-				};
-				let receiving_sender_cloned = receiving_sender.clone();
-				tokio::spawn(async move {
-					let message_raw = receive_message_raw(&mut stream).await;
-					let message: R = rmp_serde::decode::from_slice(&message_raw).unwrap();
-					receiving_sender_cloned.send(message).unwrap();
-				});
+					Err(ConnectionError::ConnectionClosed(_thingy)) => {
+						// TODO: Deserialize the reason from `_thingy` and put it in the event.
+						let event = ClientEvent::Disconnected;
+						receiving_sender.send(event).unwrap();
+						return;
+					},
+					Err(ConnectionError::LocallyClosed) => {
+						// Our own side have closed the connection, let's just wrap up as expected.
+						return;
+					},
+					Err(error) => {
+						// TODO: Handle more errors to pass as events to the user.
+						panic!("{error}");
+					},
+				}
 			}
 		});
 
@@ -517,7 +550,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		});
 	}
 
-	fn receive_message_from_server(&self) -> Option<R> {
+	fn poll_event_from_client(&self) -> Option<ClientEvent<R>> {
 		self.receiving_receiver.try_recv().ok()
 	}
 }
@@ -579,6 +612,9 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 					send_message(&connection, message).await;
 				});
 			},
+			ClientNetworkingEnum::Disconnected => {
+				// TODO: Error maybe?
+			},
 		}
 	}
 
@@ -619,11 +655,28 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	///
 	/// # client.send_message_to_server(MessageClientToServer::Hello);
 	/// ```
-	pub fn receive_message_from_server(&mut self) -> Option<R> {
+	pub fn poll_event_from_client(&mut self) -> Option<ClientEvent<R>> {
 		self.connect_if_possible();
 		match &self.0 {
 			ClientNetworkingEnum::Connecting(_connecting) => None,
-			ClientNetworkingEnum::Connected(connected) => connected.receive_message_from_server(),
+			ClientNetworkingEnum::Connected(connected) => connected.poll_event_from_client(),
+			ClientNetworkingEnum::Disconnected => None,
+		}
+	}
+
+	pub fn disconnect(&mut self) {
+		match &self.0 {
+			ClientNetworkingEnum::Connecting(_connecting) => {
+				// TODO: What do we do here?
+				self.0 = ClientNetworkingEnum::Disconnected;
+			},
+			ClientNetworkingEnum::Connected(connected) => {
+				connected.connection.close(VarInt::from_u32(0), &[]);
+				self.0 = ClientNetworkingEnum::Disconnected;
+			},
+			ClientNetworkingEnum::Disconnected => {
+				// TODO: Error? Is a double disconnection normal?
+			},
 		}
 	}
 }
