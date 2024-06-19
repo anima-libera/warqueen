@@ -6,6 +6,7 @@ use std::{
 	time::{Duration, Instant},
 };
 
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use warqueen::{ClientOnServerEvent, NetReceive, NetSend, ServerListenerNetworking};
 
@@ -33,7 +34,6 @@ fn main() {
 	let mut next_client_id = 0;
 
 	let mut last_sent_time = Instant::now();
-	let mut last_sent_index = 0;
 
 	// Make sure hitting Ctrl-C lets us close the connection properly.
 	let halt = Arc::new(AtomicBool::new(false));
@@ -75,13 +75,13 @@ fn main() {
 		// Forget about clients that disconnected.
 		clients.retain(|(_client, client_id)| !disconnected_ids.contains(client_id));
 
-		// Periodically sending a message to a client for the sake of the example.
+		// Periodically sending a message to a random client for the sake of the example.
 		if last_sent_time.elapsed() > Duration::from_millis(2500) && !clients.is_empty() {
 			last_sent_time = Instant::now();
-			last_sent_index = (last_sent_index + 1) % clients.len();
+			let random_client_index = rand::thread_rng().gen_range(0..clients.len());
 
 			// Sending a message to a client.
-			let (client, client_id) = &clients[last_sent_index];
+			let (client, client_id) = &clients[random_client_index];
 			println!("We say \"uwu\" to the client {client_id}");
 			let message = MessageServerToClient::String("uwu".to_string());
 			client.send_message_to_client(message);

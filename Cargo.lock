@@ -1138,6 +1138,7 @@ version = "0.1.0"
 dependencies = [
  "ctrlc",
  "quinn",
+ "rand",
  "rcgen",
  "rmp-serde",
  "rustls",
