@@ -9,7 +9,7 @@
 //! These two types can be enums to make up for that.
 //!
 //! ```
-//! let networking_stuff = ...;
+//! let mut networking_stuff = ...;
 //! loop {
 //!     handle_networking_stuff(&mut networking_stuff);
 //!     // ...
@@ -81,7 +81,8 @@ pub trait NetReceive: DeserializeOwned + Send + 'static {}
 /// and provides these new clients (in the form of `ClientOnServerNetworking`s)
 /// when asked for. Should be asked for in a loop, see examples.
 ///
-/// `S` and `R` are the message types that can be send and received respectively.
+/// `S` and `R` are the message types that can be send and received respectively,
+/// see the sending and receiving methods of `ClientOnServerNetworking<S, R>`.
 pub struct ServerListenerNetworking<S: NetSend, R: NetReceive> {
 	// TODO: Remove? Seems to be unused.
 	_async_runtime_handle: Handle,
@@ -101,7 +102,6 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 		let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
 		let certs = vec![cert.cert.into()];
 		let key = key.into();
-
 		let server_crypto = rustls::ServerConfig::builder()
 			.with_no_client_auth()
 			.with_single_cert(certs, key)
@@ -109,6 +109,7 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 		let server_config = quinn::ServerConfig::with_crypto(Arc::new(
 			QuicServerConfig::try_from(server_crypto).unwrap(),
 		));
+
 		let desired_server_address =
 			SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), desired_port);
 		let socket = std::net::UdpSocket::bind(desired_server_address).unwrap();
@@ -233,10 +234,11 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	/// }
 	/// impl NetSend for MessageServerToClient {}
 	///
-	/// # let server_address = "127.0.0.1:21001".parse().unwrap();
-	/// let mut client = ClientNetworking::new(server_address);
+	/// # let port = 21001;
+	/// # let server = ServerNetworking::new(port);
+	/// let client = server.pool_client().unwrap();
 	///
-	/// client.send_message_to_server(MessageServerToClient::Hello);
+	/// client.send_message_to_client(MessageServerToClient::Hello);
 	/// ```
 	// Note: Could take `impl NetSend` instead of `S`, but then it won't
 	// look like the client-side API.
