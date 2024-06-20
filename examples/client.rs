@@ -39,7 +39,7 @@ fn main() {
 
 	loop {
 		// Handling received messages from the server.
-		while let Some(event) = client.poll_event_from_client() {
+		while let Some(event) = client.poll_event_from_server() {
 			match event {
 				ClientEvent::Message(message) => match message {
 					MessageServerToClient::String(content) => println!("The server says \"{content}\""),

@@ -188,7 +188,8 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 	/// }
 	///
 	/// # let client = server.poll_client().unwrap();
-	/// # let _: MessageClientToServer = client.receive_message_from_client().unwrap();
+	/// # let _: ClientOnServerEvent<MessageClientToServer> =
+	/// #     client.poll_event_from_client().unwrap();
 	/// # client.send_message_to_client(MessageServerToClient::Hello);
 	/// ```
 	pub fn poll_client(&self) -> Option<ClientOnServerNetworking<S, R>> {
@@ -295,7 +296,8 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	///
 	/// client.send_message_to_client(MessageServerToClient::Hello);
 	///
-	/// # let _: MessageClientToServer = client.receive_message_from_client().unwrap();
+	/// # let _: ClientOnServerEvent<MessageClientToServer> =
+	/// #     client.poll_event_from_client().unwrap();
 	/// ```
 	// Note: Could take `impl NetSend` instead of `S`, but then it won't
 	// look like the client-side API.
@@ -333,13 +335,17 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	/// let client = server.poll_client().unwrap();
 	///
 	/// loop {
-	///     while let Some(message) = client.receive_message_from_client() {
-	///         match message {
-	///             MessageClientToServer::Hello => { /* ... */ },
-	///             // Handle the different possible message variants...
+	///     while let Some(event) = client.poll_event_from_client() {
+	///         match event {
+	///             ClientOnServerEvent::Message(message) => match message {
+	///                 MessageClientToServer::Hello => { /* ... */ },
+	///                 // Handle the different possible message variants...
+	///             },
+	///             ClientOnServerEvent::Disconnected => {
+	///                 // Handle the client disconnection...
+	///             },
 	///         }
 	///     }
-	///     // ...
 	/// }
 	///
 	/// # client.send_message_to_client(MessageServerToClient::Hello);
@@ -598,7 +604,8 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	///
 	/// client.send_message_to_server(MessageClientToServer::Hello);
 	///
-	/// # let _: MessageServerToClient = client.receive_message_from_server().unwrap();
+	/// # let _: ClientEvent<MessageServerToClient> =
+	/// #     client.poll_event_from_server().unwrap();
 	/// ```
 	pub fn send_message_to_server(&mut self, message: S) {
 		self.connect_if_possible();
@@ -644,18 +651,22 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// let mut client = ClientNetworking::new(server_address);
 	///
 	/// loop {
-	///     while let Some(message) = client.receive_message_from_server() {
-	///         match message {
-	///             MessageServerToClient::Hello => { /* ... */ },
-	///             // Handle the different possible message variants...
+	///     while let Some(event) = client.poll_event_from_server() {
+	///         match event {
+	///             ClientEvent::Message(message) => match message {
+	///                 MessageServerToClient::Hello => { /* ... */ },
+	///                 // Handle the different possible message variants...
+	///             },
+	///             ClientEvent::Disconnected => {
+	///                 // Handle the server disconnection...
+	///             },
 	///         }
 	///     }
-	///     // ...
 	/// }
 	///
 	/// # client.send_message_to_server(MessageClientToServer::Hello);
 	/// ```
-	pub fn poll_event_from_client(&mut self) -> Option<ClientEvent<R>> {
+	pub fn poll_event_from_server(&mut self) -> Option<ClientEvent<R>> {
 		self.connect_if_possible();
 		match &self.0 {
 			ClientNetworkingEnum::Connecting(_connecting) => None,
@@ -664,6 +675,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 		}
 	}
 
+	/// Closes the connection with the server.
 	pub fn disconnect(&mut self) {
 		match &self.0 {
 			ClientNetworkingEnum::Connecting(_connecting) => {
