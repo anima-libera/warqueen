@@ -25,11 +25,13 @@ impl NetSend for MessageServerToClient {}
 
 fn main() {
 	let desired_port = 21001;
+	// Full type is `ServerListenerNetworking<MessageServerToClient, MessageClientToServer>`.
 	let server_listener = ServerListenerNetworking::new(desired_port);
 	let actual_port = server_listener.server_port();
 	println!("Opened on port {actual_port}");
 
 	// List of connected clients, stored as tuples (client, id).
+	// Full client type is `ClientOnServerNetworking<MessageServerToClient, MessageClientToServer>`.
 	let mut clients = vec![];
 	let mut next_client_id = 0;
 

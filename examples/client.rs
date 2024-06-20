@@ -24,6 +24,7 @@ impl NetReceive for MessageServerToClient {}
 
 fn main() {
 	let server_address = "127.0.0.1:21001".parse().unwrap();
+	// Full type is `ClientNetworking<MessageClientToServer, MessageServerToClient>`.
 	let mut client = ClientNetworking::new(server_address);
 
 	let mut last_sent_time = Instant::now();

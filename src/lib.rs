@@ -200,6 +200,8 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 
 /// A connection to a client, from a server's perspective.
 ///
+/// Returned by [`ServerListenerNetworking::poll_client`].
+///
 /// `S` and `R` are the message types that can be send and received respectively.
 pub struct ClientOnServerNetworking<S: NetSend, R: NetReceive> {
 	async_runtime_handle: Handle,
@@ -208,8 +210,13 @@ pub struct ClientOnServerNetworking<S: NetSend, R: NetReceive> {
 	_phantom: PhantomData<S>,
 }
 
+/// Returned by [`ClientOnServerNetworking::poll_event_from_client`].
+///
+/// Describes an event that happened regarding the connection to a client.
 pub enum ClientOnServerEvent<R: NetReceive> {
+	/// The client sent us a message.
 	Message(R),
+	/// We got disconnected from the client.
 	Disconnected,
 }
 
@@ -437,8 +444,13 @@ struct ClientNetworkingConnected<S: NetSend, R: NetReceive> {
 	_phantom: PhantomData<S>,
 }
 
+/// Returned by [`ClientNetworking::poll_event_from_server`].
+///
+/// Describes an event that happened regarding the connection to a server.
 pub enum ClientEvent<R: NetReceive> {
+	/// The server sent us a message.
 	Message(R),
+	/// We got disconnected from the server.
 	Disconnected,
 }
 
