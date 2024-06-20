@@ -10,6 +10,7 @@
 //! and a message type for server-to-client messaging, and that is all.
 //! These two types can be enums to make up for that.
 //!
+//! Both the client code and server code are supposed to have the following structure:
 //! ```ignore
 //! let mut networking_stuff = ...;
 //! loop {
@@ -162,21 +163,21 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 	/// ```no_run
 	/// # use serde::{Serialize, Deserialize};
 	/// # use warqueen::*;
-	///
+	/// #
 	/// # #[derive(Serialize, Deserialize)]
 	/// # enum MessageServerToClient {
 	/// #     Hello,
 	/// #     // ...
 	/// # }
 	/// # impl NetSend for MessageServerToClient {}
-	///
+	/// #
 	/// # #[derive(Serialize, Deserialize)]
 	/// # enum MessageClientToServer {
 	/// #     Hello,
 	/// #     // ...
 	/// # }
 	/// # impl NetReceive for MessageClientToServer {}
-	///
+	/// #
 	/// # let port = 21001;
 	/// let server = ServerListenerNetworking::new(port);
 	///
@@ -186,7 +187,7 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 	///     }
 	///     // ...
 	/// }
-	///
+	/// #
 	/// # let client = server.poll_client().unwrap();
 	/// # let _: ClientOnServerEvent<MessageClientToServer> =
 	/// #     client.poll_event_from_client().unwrap();
@@ -275,7 +276,7 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	/// ```no_run
 	/// # use serde::{Serialize, Deserialize};
 	/// # use warqueen::*;
-	///
+	/// #
 	/// #[derive(Serialize, Deserialize)]
 	/// enum MessageServerToClient {
 	///     Hello,
@@ -289,13 +290,13 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	/// #     // ...
 	/// # }
 	/// # impl NetReceive for MessageClientToServer {}
-	///
+	/// #
 	/// # let port = 21001;
 	/// # let server = ServerListenerNetworking::new(port);
 	/// let client = server.poll_client().unwrap();
 	///
 	/// client.send_message_to_client(MessageServerToClient::Hello);
-	///
+	/// #
 	/// # let _: ClientOnServerEvent<MessageClientToServer> =
 	/// #     client.poll_event_from_client().unwrap();
 	/// ```
@@ -315,14 +316,14 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	/// ```no_run
 	/// # use serde::{Serialize, Deserialize};
 	/// # use warqueen::*;
-	///
+	/// #
 	/// # #[derive(Serialize, Deserialize)]
 	/// # enum MessageServerToClient {
 	/// #     Hello,
 	/// #     // ...
 	/// # }
 	/// # impl NetSend for MessageServerToClient {}
-	///
+	/// #
 	/// #[derive(Serialize, Deserialize)]
 	/// enum MessageClientToServer {
 	///     Hello,
@@ -347,7 +348,7 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	///         }
 	///     }
 	/// }
-	///
+	/// #
 	/// # client.send_message_to_client(MessageServerToClient::Hello);
 	/// ```
 	pub fn poll_event_from_client(&self) -> Option<ClientOnServerEvent<R>> {
@@ -584,14 +585,14 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// ```no_run
 	/// # use serde::{Serialize, Deserialize};
 	/// # use warqueen::*;
-	///
+	/// #
 	/// # #[derive(Serialize, Deserialize)]
 	/// # enum MessageServerToClient {
 	/// #     Hello,
 	/// #     // ...
 	/// # }
 	/// # impl NetReceive for MessageServerToClient {}
-	///
+	/// #
 	/// #[derive(Serialize, Deserialize)]
 	/// enum MessageClientToServer {
 	///     Hello,
@@ -603,7 +604,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// let mut client = ClientNetworking::new(server_address);
 	///
 	/// client.send_message_to_server(MessageClientToServer::Hello);
-	///
+	/// #
 	/// # let _: ClientEvent<MessageServerToClient> =
 	/// #     client.poll_event_from_server().unwrap();
 	/// ```
@@ -632,14 +633,14 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// ```no_run
 	/// # use serde::{Serialize, Deserialize};
 	/// # use warqueen::*;
-	///
+	/// #
 	/// # #[derive(Serialize, Deserialize)]
 	/// # enum MessageClientToServer {
 	/// #     Hello,
 	/// #     // ...
 	/// # }
 	/// # impl NetSend for MessageClientToServer {}
-	///
+	/// #
 	/// #[derive(Serialize, Deserialize)]
 	/// enum MessageServerToClient {
 	///     Hello,
@@ -663,7 +664,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	///         }
 	///     }
 	/// }
-	///
+	/// #
 	/// # client.send_message_to_server(MessageClientToServer::Hello);
 	/// ```
 	pub fn poll_event_from_server(&mut self) -> Option<ClientEvent<R>> {
