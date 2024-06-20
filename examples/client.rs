@@ -46,7 +46,7 @@ fn main() {
 					MessageServerToClient::String(content) => println!("The server says \"{content}\""),
 				},
 				ClientEvent::Disconnected => {
-					println!("Server disconnected");
+					println!("Server disconnected, let's terminate");
 					return;
 				},
 			}
@@ -65,9 +65,7 @@ fn main() {
 		if halt.load(Ordering::Relaxed) {
 			// User hit Ctrl-C, we should close now.
 			println!("Let's disconnect");
-			client.disconnect();
-			// Make sure the disconnection had time to be sent to the other side properly.
-			std::thread::sleep(Duration::from_millis(100));
+			client.disconnect().wait_for_proper_disconnection();
 			break;
 		}
 

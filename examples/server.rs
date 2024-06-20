@@ -94,10 +94,8 @@ fn main() {
 			println!("Let's disconnect everyone");
 			for (client, client_id) in clients {
 				println!("Disconnecting client {client_id}");
-				client.disconnect();
+				client.disconnect().wait_for_proper_disconnection();
 			}
-			// Make sure the disconnection had time to be sent to the other side properly.
-			std::thread::sleep(Duration::from_millis(100));
 			return;
 		}
 

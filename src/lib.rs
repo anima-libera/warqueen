@@ -9,6 +9,7 @@
 //! - There is a message type for client-to-server messaging,
 //! and a message type for server-to-client messaging, and that is all.
 //! These two types can be enums to make up for that.
+//! - Nyaa :3
 //!
 //! Both the client code and server code are supposed to have the following structure:
 //! ```ignore
@@ -19,12 +20,17 @@
 //! }
 //! ```
 //!
-//! Go see the examples, they are very simple, probably the best guide for Warqueen.
+//! Go see the examples, they are very simple, probably the best guide for Warqueen!
+//!
+//! Things to keep in mind:
+//! - Do not use, lacks plenty of features.
+//! - Beware the [`DisconnectionHandle`]s that are better waited for on the main thread.
+//! - Good luck out there!
 
 use std::{
 	marker::PhantomData,
 	net::{IpAddr, Ipv4Addr, SocketAddr},
-	sync::{mpsc::Receiver, Arc},
+	sync::{mpsc::Receiver, Arc, Barrier},
 	time::Duration,
 };
 
@@ -72,6 +78,88 @@ async fn send_message(connection: &Connection, message: impl Serialize) {
 async fn receive_message_raw(stream: &mut RecvStream) -> Vec<u8> {
 	const ONE_GIGABYTE_IN_BYTES: usize = 1073741824;
 	stream.read_to_end(ONE_GIGABYTE_IN_BYTES).await.unwrap()
+}
+
+/// A thingy that allows to make sure that a disconnection has the time to happen properly.
+///
+/// When the main thread terminates, all the other threads are killed, so only the main thread
+/// should have the responsability to wait for the disconnection to properly end
+/// (because other threads could just be killed by the main thread's termination).
+/// For this reason, a `DisconnectionHandle` should be passed to the main thread
+/// and only then [`DisconnectionHandle::wait_for_proper_disconnection`].
+///
+/// Should not be dropped without the waiting being done.
+#[must_use = "Not making sure that the diconnection happens before process exit is bad"]
+pub struct DisconnectionHandle {
+	barrier: Option<Arc<Barrier>>,
+	waited_for: bool,
+}
+
+impl DisconnectionHandle {
+	fn with_barrier(barrier: Arc<Barrier>) -> DisconnectionHandle {
+		DisconnectionHandle { barrier: Some(barrier), waited_for: false }
+	}
+
+	fn without_barrier() -> DisconnectionHandle {
+		DisconnectionHandle { barrier: None, waited_for: false }
+	}
+
+	/// Wait for the diconnection that returned this handle to properly happen.
+	///
+	/// It should be fast, but should be done. When diconnecting and then terminating
+	/// the process, the process termination can happen too fast and cut the networking
+	/// thread half way through its process of properly disconnecting.
+	///
+	/// For every disconnection that you do not wait properly for, a kitten feel sad.
+	/// Do not make kittens sad, be a good person and wait for proper disconnections.
+	pub fn wait_for_proper_disconnection(mut self) {
+		Self::check_that_we_are_on_the_main_thread();
+		self.actually_wait_for_proper_disconnection();
+	}
+
+	/// If you are reaaallly sure that you can wait just fine on this thread
+	/// that is not the main thread, then you do you.
+	pub fn wait_for_proper_disconnection_while_not_on_the_main_thread(mut self) {
+		self.actually_wait_for_proper_disconnection();
+	}
+
+	fn actually_wait_for_proper_disconnection(&mut self) {
+		if let Some(barrier) = &self.barrier {
+			barrier.wait();
+		}
+		self.waited_for = true;
+
+		// TODO: What happens when the other thread panics before the wait call?
+		// Does it just blocks here forever?
+		// Maybe we should find a way to block with a timeout here instead,
+		// like what about a 1 second timeout, or a user-chosen timeout?
+	}
+
+	fn check_that_we_are_on_the_main_thread() {
+		if let Some(is_main_thread_answer) = is_main_thread::is_main_thread() {
+			if is_main_thread_answer {
+				// Nice, we are in the main thread, this is where we should wait
+				// (because it is the main thread that kills all the others when it terminates).
+			} else {
+				println!(
+					"Warning: `ClientDisconnectionHandle::wait_for_proper_disconnection` \
+					should be called in the main thread, see documentation as to why."
+				)
+			}
+		}
+	}
+}
+
+impl Drop for DisconnectionHandle {
+	fn drop(&mut self) {
+		if !self.waited_for {
+			println!(
+				"Warning: `ClientDisconnectionHandle` dropped \
+				instead of being intentionally waited for."
+			);
+			self.actually_wait_for_proper_disconnection();
+		}
+	}
 }
 
 /// Message type that is used for sending have to impl this trait.
@@ -135,8 +223,11 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 				loop {
 					let connection = endpoint.accept().await.unwrap().await.unwrap();
 
-					let client =
-						ClientOnServerNetworking::new(async_runtime_handle_cloned.clone(), connection);
+					let client = ClientOnServerNetworking::new(
+						async_runtime_handle_cloned.clone(),
+						connection,
+						endpoint.clone(),
+					);
 
 					client_sender.send(client).unwrap();
 				}
@@ -206,6 +297,7 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 pub struct ClientOnServerNetworking<S: NetSend, R: NetReceive> {
 	async_runtime_handle: Handle,
 	connection: Connection,
+	endpoint: Endpoint,
 	receiving_receiver: Receiver<ClientOnServerEvent<R>>,
 	_phantom: PhantomData<S>,
 }
@@ -221,7 +313,11 @@ pub enum ClientOnServerEvent<R: NetReceive> {
 }
 
 impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
-	fn new(async_runtime_handle: Handle, connection: Connection) -> ClientOnServerNetworking<S, R> {
+	fn new(
+		async_runtime_handle: Handle,
+		connection: Connection,
+		endpoint: Endpoint,
+	) -> ClientOnServerNetworking<S, R> {
 		let (receiving_sender, receiving_receiver) = std::sync::mpsc::channel();
 
 		let connection_cloned = connection.clone();
@@ -266,6 +362,7 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 		ClientOnServerNetworking {
 			async_runtime_handle,
 			connection,
+			endpoint,
 			receiving_receiver,
 			_phantom: PhantomData,
 		}
@@ -362,8 +459,17 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 		self.receiving_receiver.try_recv().ok()
 	}
 
-	pub fn disconnect(&self) {
-		self.connection.close(VarInt::from_u32(0), &[])
+	pub fn disconnect(&self) -> DisconnectionHandle {
+		self.connection.close(VarInt::from_u32(0), &[]);
+		// Close properly.
+		let endpoint = self.endpoint.clone();
+		let barrier = Arc::new(Barrier::new(2));
+		let barrier_cloned = Arc::clone(&barrier);
+		self.async_runtime_handle.spawn(async move {
+			endpoint.wait_idle().await;
+			barrier_cloned.wait();
+		});
+		DisconnectionHandle::with_barrier(barrier)
 	}
 }
 
@@ -440,6 +546,7 @@ struct ClientNetworkingConnecting<S: NetSend, R: NetReceive> {
 struct ClientNetworkingConnected<S: NetSend, R: NetReceive> {
 	async_runtime_handle: Handle,
 	connection: Connection,
+	endpoint: Endpoint,
 	receiving_receiver: Receiver<ClientEvent<R>>,
 	_phantom: PhantomData<S>,
 }
@@ -493,7 +600,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
 			let connection = endpoint.connect(server_address, SERVER_NAME).unwrap().await.unwrap();
 
 			let connected_client =
-				ClientNetworkingConnected::new(async_runtime_handle_cloned, connection);
+				ClientNetworkingConnected::new(async_runtime_handle_cloned, connection, endpoint);
 
 			connected_client_sender.send(connected_client).unwrap();
 		});
@@ -512,7 +619,11 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
 }
 
 impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
-	fn new(async_runtime_handle: Handle, connection: Connection) -> ClientNetworkingConnected<S, R> {
+	fn new(
+		async_runtime_handle: Handle,
+		connection: Connection,
+		endpoint: Endpoint,
+	) -> ClientNetworkingConnected<S, R> {
 		let (receiving_sender, receiving_receiver) = std::sync::mpsc::channel();
 
 		let connection_cloned = connection.clone();
@@ -557,6 +668,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		ClientNetworkingConnected {
 			async_runtime_handle,
 			connection,
+			endpoint,
 			receiving_receiver,
 			_phantom: PhantomData,
 		}
@@ -689,18 +801,29 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	}
 
 	/// Closes the connection with the server.
-	pub fn disconnect(&mut self) {
+	pub fn disconnect(&mut self) -> DisconnectionHandle {
 		match &self.0 {
 			ClientNetworkingEnum::Connecting(_connecting) => {
 				// TODO: What do we do here?
 				self.0 = ClientNetworkingEnum::Disconnected;
+				DisconnectionHandle::without_barrier()
 			},
 			ClientNetworkingEnum::Connected(connected) => {
 				connected.connection.close(VarInt::from_u32(0), &[]);
+				// Close properly.
+				let endpoint = connected.endpoint.clone();
+				let barrier = Arc::new(Barrier::new(2));
+				let barrier_cloned = Arc::clone(&barrier);
+				connected.async_runtime_handle.spawn(async move {
+					endpoint.wait_idle().await;
+					barrier_cloned.wait();
+				});
 				self.0 = ClientNetworkingEnum::Disconnected;
+				DisconnectionHandle::with_barrier(barrier)
 			},
 			ClientNetworkingEnum::Disconnected => {
 				// TODO: Error? Is a double disconnection normal?
+				DisconnectionHandle::without_barrier()
 			},
 		}
 	}

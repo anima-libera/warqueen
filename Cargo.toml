@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+is_main_thread = "0.1.0"
 quinn = "0.11.2"
 rcgen = "0.13.1"
 rmp-serde = "1.3.0"
