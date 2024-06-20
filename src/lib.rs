@@ -547,6 +547,7 @@ struct ClientNetworkingConnected<S: NetSend, R: NetReceive> {
 	async_runtime_handle: Handle,
 	connection: Connection,
 	endpoint: Endpoint,
+	connected_event_already_polled: bool,
 	receiving_receiver: Receiver<ClientEvent<R>>,
 	_phantom: PhantomData<S>,
 }
@@ -555,6 +556,8 @@ struct ClientNetworkingConnected<S: NetSend, R: NetReceive> {
 ///
 /// Describes an event that happened regarding the connection to a server.
 pub enum ClientEvent<R: NetReceive> {
+	/// We actually established a connection with the server.
+	Connected,
 	/// The server sent us a message.
 	Message(R),
 	/// We got disconnected from the server.
@@ -669,6 +672,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 			async_runtime_handle,
 			connection,
 			endpoint,
+			connected_event_already_polled: false,
 			receiving_receiver,
 			_phantom: PhantomData,
 		}
@@ -681,8 +685,13 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		});
 	}
 
-	fn poll_event_from_client(&self) -> Option<ClientEvent<R>> {
-		self.receiving_receiver.try_recv().ok()
+	fn poll_event_from_client(&mut self) -> Option<ClientEvent<R>> {
+		if !self.connected_event_already_polled {
+			self.connected_event_already_polled = true;
+			Some(ClientEvent::Connected)
+		} else {
+			self.receiving_receiver.try_recv().ok()
+		}
 	}
 }
 
@@ -793,7 +802,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// ```
 	pub fn poll_event_from_server(&mut self) -> Option<ClientEvent<R>> {
 		self.connect_if_possible();
-		match &self.0 {
+		match &mut self.0 {
 			ClientNetworkingEnum::Connecting(_connecting) => None,
 			ClientNetworkingEnum::Connected(connected) => connected.poll_event_from_client(),
 			ClientNetworkingEnum::Disconnected => None,
