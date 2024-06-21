@@ -3,6 +3,10 @@ name = "warqueen"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Makes unintentional dropping of `DisconnectionHandle` to panic.
+forbid_handle_drop = []
+
 [dependencies]
 is_main_thread = "0.1.0"
 quinn = "0.11.2"

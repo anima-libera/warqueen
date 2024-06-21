@@ -129,6 +129,7 @@ async fn receive_message_raw(stream: &mut RecvStream) -> Vec<u8> {
 /// and only then [`DisconnectionHandle::wait_for_proper_disconnection`].
 ///
 /// Should not be dropped without the waiting being done.
+/// If the `forbid_handle_drop` feature is enabled then unwaited handle drop panics.
 #[must_use = "Not making sure that the diconnection happens before process exit is bad"]
 pub struct DisconnectionHandle {
 	barrier: Option<Arc<Barrier>>,
@@ -183,7 +184,7 @@ impl DisconnectionHandle {
 			} else {
 				println!(
 					"Warning: `ClientDisconnectionHandle::wait_for_proper_disconnection` \
-					should be called in the main thread, see documentation as to why."
+					should be called in the main thread, see documentation as to why"
 				)
 			}
 		}
@@ -193,11 +194,24 @@ impl DisconnectionHandle {
 impl Drop for DisconnectionHandle {
 	fn drop(&mut self) {
 		if !self.waited_for {
-			println!(
-				"Warning: `ClientDisconnectionHandle` dropped \
-				instead of being intentionally waited for."
-			);
-			self.actually_wait_for_proper_disconnection();
+			#[cfg(forbid_handle_drop)]
+			{
+				if !std::thread::panicking() {
+					panic!(
+						"`ClientDisconnectionHandle` dropped \
+						instead of being intentionally waited for"
+					);
+				}
+			}
+			#[cfg(not(forbid_handle_drop))]
+			{
+				println!(
+					"Warning: `ClientDisconnectionHandle` dropped \
+				instead of being intentionally waited for"
+				);
+				Self::check_that_we_are_on_the_main_thread();
+				self.actually_wait_for_proper_disconnection();
+			}
 		}
 	}
 }
