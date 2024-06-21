@@ -194,17 +194,14 @@ impl DisconnectionHandle {
 impl Drop for DisconnectionHandle {
 	fn drop(&mut self) {
 		if !self.waited_for {
-			#[cfg(forbid_handle_drop)]
-			{
+			if cfg!(feature = "forbid_handle_drop") {
 				if !std::thread::panicking() {
 					panic!(
 						"`ClientDisconnectionHandle` dropped \
 						instead of being intentionally waited for"
 					);
 				}
-			}
-			#[cfg(not(forbid_handle_drop))]
-			{
+			} else {
 				println!(
 					"Warning: `ClientDisconnectionHandle` dropped \
 				instead of being intentionally waited for"
