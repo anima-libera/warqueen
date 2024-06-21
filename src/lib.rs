@@ -37,7 +37,7 @@ use std::{
 use quinn::{
 	crypto::rustls::{QuicClientConfig, QuicServerConfig},
 	default_runtime, ClientConfig, Connection, ConnectionError, Endpoint, EndpointConfig,
-	RecvStream, VarInt,
+	RecvStream, StoppedError, VarInt, WriteError,
 };
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use serde::{de::DeserializeOwned, Serialize};
@@ -67,12 +67,52 @@ fn async_runtime() -> Handle {
 	async_runtime_handle
 }
 
-async fn send_message(connection: &Connection, message: impl Serialize) {
-	let mut stream = connection.open_uni().await.unwrap();
-	let message_raw = rmp_serde::encode::to_vec(&message).unwrap();
-	stream.write_all(&message_raw).await.unwrap();
-	stream.finish().unwrap();
-	stream.stopped().await.unwrap();
+#[derive(Debug)]
+enum SendingError {
+	OpenUni(ConnectionError),
+	WriteAll(WriteError),
+	Stopped(StoppedError),
+}
+
+impl SendingError {
+	fn ignore_locally_close_error(self) -> Option<SendingError> {
+		match self {
+			SendingError::OpenUni(ConnectionError::LocallyClosed)
+			| SendingError::WriteAll(WriteError::ConnectionLost(ConnectionError::LocallyClosed))
+			| SendingError::Stopped(StoppedError::ConnectionLost(ConnectionError::LocallyClosed)) => None,
+			error => Some(error),
+		}
+	}
+}
+
+async fn send_message(
+	connection: &Connection,
+	message: impl Serialize,
+) -> Result<(), SendingError> {
+	#[inline]
+	/// Sends message and returns any error.
+	async fn internal_send_message(
+		connection: &Connection,
+		message: impl Serialize,
+	) -> Result<(), SendingError> {
+		let mut stream = connection.open_uni().await.map_err(SendingError::OpenUni)?;
+		let message_raw = rmp_serde::encode::to_vec(&message).unwrap();
+		stream.write_all(&message_raw).await.map_err(SendingError::WriteAll)?;
+		stream.finish().unwrap();
+		stream.stopped().await.map_err(SendingError::Stopped)?;
+		Ok(())
+	}
+
+	let result = internal_send_message(connection, message).await;
+
+	// Here we ignore `ConnectionError::LocallyClosed` errors.
+	// It makes sense, we closed the connection, it is expected that the messages still
+	// in the process of being sent could just not be sent.
+	match result.map_err(SendingError::ignore_locally_close_error) {
+		Ok(()) => Ok(()),
+		Err(Some(error)) => Err(error),
+		Err(None) => Ok(()),
+	}
 }
 
 async fn receive_message_raw(stream: &mut RecvStream) -> Vec<u8> {
@@ -409,7 +449,7 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	pub fn send_message_to_client(&self, message: S) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
-			send_message(&connection, message).await;
+			send_message(&connection, message).await.unwrap();
 		});
 	}
 
@@ -681,7 +721,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 	fn send_message_to_server(&self, message: S) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
-			send_message(&connection, message).await;
+			send_message(&connection, message).await.unwrap();
 		});
 	}
 
@@ -750,7 +790,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 			ClientNetworkingEnum::Connected(connected) => {
 				let connection = connected.connection.clone();
 				connected.async_runtime_handle.spawn(async move {
-					send_message(&connection, message).await;
+					send_message(&connection, message).await.unwrap();
 				});
 			},
 			ClientNetworkingEnum::Disconnected => {
