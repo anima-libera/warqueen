@@ -47,7 +47,7 @@ fn main() {
 	.unwrap();
 
 	loop {
-		// Handling new clinets connecting.
+		// Handling new clients connecting.
 		while let Some(new_client) = server_listener.poll_client() {
 			// Oh a new client connected!
 			let address = new_client.client_address();

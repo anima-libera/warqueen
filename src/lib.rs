@@ -9,13 +9,16 @@
 //! - There is a message type for client-to-server messaging,
 //! and a message type for server-to-client messaging, and that is all.
 //! These two types can be enums to make up for that.
-//! - Nyaa :3
+//! - Nya :3
 //!
-//! Both the client code and server code are supposed to have the following structure:
+//! Both the client code and server code are supposed to have vaguely the following structure:
 //! ```ignore
 //! let mut networking_stuff = ...;
 //! loop {
-//!     handle_networking_stuff(&mut networking_stuff);
+//!     while let Some(event) = poll_event(&mut networking_stuff) {
+//!         handle_event(event);
+//!     }
+//!     handle_other_networking_stuff(&mut networking_stuff);
 //!     // ...
 //! }
 //! ```
@@ -120,13 +123,22 @@ async fn receive_message_raw(stream: &mut RecvStream) -> Vec<u8> {
 	stream.read_to_end(ONE_GIGABYTE_IN_BYTES).await.unwrap()
 }
 
-/// A thingy that allows to make sure that a disconnection has the time to happen properly.
+/// A thingy that allows to make sure that a disconnection has the time to happen properly
+/// before process termination.
+///
+/// If the disconnection is not given the time to finish properly, then the other end
+/// will not be properly notified that the connection is closed and will have to
+/// timeout to notice, which is so rude!
 ///
 /// When the main thread terminates, all the other threads are killed, so only the main thread
 /// should have the responsability to wait for the disconnection to properly end
 /// (because other threads could just be killed by the main thread's termination).
 /// For this reason, a `DisconnectionHandle` should be passed to the main thread
-/// and only then [`DisconnectionHandle::wait_for_proper_disconnection`].
+/// and only then call [`DisconnectionHandle::wait_for_proper_disconnection`].
+///
+/// If you do not care about this or know that waiting in whatever thread is fine,
+/// then call [`DisconnectionHandle::wait_for_proper_disconnection_while_not_on_the_main_thread`],
+/// not unsafe but has a long name.
 ///
 /// Should not be dropped without the waiting being done.
 /// If the `forbid_handle_drop` feature is enabled then unwaited handle drop panics.
@@ -152,14 +164,17 @@ impl DisconnectionHandle {
 	/// thread half way through its process of properly disconnecting.
 	///
 	/// For every disconnection that you do not wait properly for, a kitten feel sad.
-	/// Do not make kittens sad, be a good person and wait for proper disconnections.
+	/// Do not sadden kitties, please wait for proper disconnections 🥺.
 	pub fn wait_for_proper_disconnection(mut self) {
 		Self::check_that_we_are_on_the_main_thread();
 		self.actually_wait_for_proper_disconnection();
 	}
 
 	/// If you are reaaallly sure that you can wait just fine on this thread
-	/// that is not the main thread, then you do you.
+	/// that may not be the main thread, then call this method.
+	///
+	/// Same as [`DisconnectionHandle::wait_for_proper_disconnection`] but
+	/// doesn't warns if called from a thread that is not the main thread.
 	pub fn wait_for_proper_disconnection_while_not_on_the_main_thread(mut self) {
 		self.actually_wait_for_proper_disconnection();
 	}
@@ -221,10 +236,12 @@ pub trait NetReceive: DeserializeOwned + Send + 'static {}
 
 /// A piece of server networking that establishes connections to new clients
 /// and provides these new clients (in the form of `ClientOnServerNetworking`s)
-/// when asked for. Should be asked for in a loop, see examples.
+/// when asked for.
+///
+/// Should be asked for in a loop, see examples and [`ServerListenerNetworking::poll_client`].
 ///
 /// `S` and `R` are the message types that can be send and received respectively,
-/// see the sending and receiving methods of `ClientOnServerNetworking<S, R>`.
+/// used by the sending and receiving methods of [`ClientOnServerNetworking<S, R>`].
 pub struct ServerListenerNetworking<S: NetSend, R: NetReceive> {
 	// TODO: Remove? Seems to be unused.
 	_async_runtime_handle: Handle,
@@ -233,6 +250,10 @@ pub struct ServerListenerNetworking<S: NetSend, R: NetReceive> {
 }
 
 impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
+	/// Opens a `ServerListenerNetworking` on the given desired port hopefully.
+	///
+	/// The port actually used may be different from the desired port,
+	/// see [`ServerListenerNetworking::server_port`].
 	pub fn new(desired_port: u16) -> ServerListenerNetworking<S, R> {
 		rustls::crypto::ring::default_provider().install_default().unwrap();
 
@@ -300,6 +321,8 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 
 	/// If new clients are connected to the server, then returns one of them.
 	///
+	/// A new client connection can be seen as an event that should be polled in a loop.
+	///
 	/// # Examples
 	///
 	/// ```no_run
@@ -340,7 +363,7 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
 	}
 }
 
-/// A connection to a client, from a server's perspective.
+/// A connection to a client, from a server's point of view.
 ///
 /// Returned by [`ServerListenerNetworking::poll_client`].
 ///
@@ -623,7 +646,11 @@ enum ClientNetworkingEnum<S: NetSend, R: NetReceive> {
 	Disconnected,
 }
 
-/// A connection to a server, from a client's perspective.
+/// A connection to a server, from a client's point of view.
+///
+/// The actual connection is established after this is created,
+/// which is notified in the form of a [`ClientEvent::Connected`].
+/// Messages sent before that are all actually sent at that moment.
 ///
 /// `S` and `R` are the message types that can be send and received respectively.
 pub struct ClientNetworking<S: NetSend, R: NetReceive>(ClientNetworkingEnum<S, R>);
@@ -747,13 +774,14 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 }
 
 impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
+	/// Connects to the server at the given address.
 	pub fn new(server_address: SocketAddr) -> ClientNetworking<S, R> {
 		ClientNetworking(ClientNetworkingEnum::Connecting(
 			ClientNetworkingConnecting::new(server_address),
 		))
 	}
 
-	/// Transition to the `Connected` variant if we finally established the connection.
+	/// Transitions to the `Connected` variant if we finally established the connection.
 	fn connect_if_possible(&mut self) {
 		if let ClientNetworkingEnum::Connecting(connecting) = &mut self.0 {
 			if let Some(connected) = connecting.connected() {
@@ -762,7 +790,11 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 		}
 	}
 
-	/// Just sends the given message to the server.
+	/// Sends the given message to the server.
+	///
+	/// Takes some time, the message is sent over time.
+	/// If the sending was not finished when the connection is closed then
+	/// the server won't receive the message.
 	///
 	/// # Examples
 	///
