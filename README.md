@@ -119,7 +119,7 @@ clients[some_index_whatever].disconnect().wait_for_proper_disconnection();
 
 ## Scale
 
-Hobby-scale! Just a small wrapper around [Quinn](https://crates.io/crates/quinn) (best Rust netwroking crate for game networking?) to get an API that I like.
+Hobby-scale! Just a small wrapper around [Quinn](https://crates.io/crates/quinn) (best Rust netwroking crate for game networking?) to get an API that I like. It may be suited for game networking, hopefully! At least I am using it in my game.
 
 See the [TODO list](TODO.md) for potential future features. Also don't hesitate to contribute!
 

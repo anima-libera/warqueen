@@ -3,6 +3,16 @@ name = "warqueen"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+authors = ["Anima <anim.libera@gmail.com>"]
+description = "Simple message based networking, non-async and non-blocking"
+keywords = ["networking", "gamedev"]
+categories = ["network-programming", "game-development"]
+readme = "README.md"
+repository = "https://github.com/anima-libera/warqueen"
+exclude = ["/.vscode", "rustfmt.toml", ".gitignore"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--no-deps"]
 
 [features]
 # Makes unintentional dropping of `DisconnectionHandle` to panic.
