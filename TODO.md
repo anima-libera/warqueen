@@ -13,6 +13,6 @@
 - Tests.
 - Add compression to the serialized messages, and make it configurable, maybe even by message.
 - Add a way to get a network usage estimation, like the amount of data sent/received so far, or like that but by message.
-- Make derive macros to make implementation of `NetSend` and `NetReceive` cleaner.
+- Make derive macros doc link to traits in Warqueen properly.
 - Do we get rid of the rustfmt config?
 - Add a method to `ServerListenerNetworking` to no longer accept new connections.

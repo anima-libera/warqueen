@@ -25,9 +25,14 @@
 //!
 //! Go see the examples, they are very simple, probably the best guide for Warqueen!
 //!
+//! Also the [README](https://github.com/anima-libera/warqueen/blob/main/README.md)
+//! that is displayed on the [crates.io page](https://crates.io/crates/warqueen)
+//! has somewhat of a usage guide.
+//!
 //! Things to keep in mind:
 //! - Do not use, lacks plenty of features.
-//! - Beware the [`DisconnectionHandle`]s that are better waited for on the main thread.
+//! - Beware the [`DisconnectionHandle`]s that are better waited for on the main thread
+//! (if you have multiple threads and disconnect from a thread other than the main thread).
 //! - Good luck out there!
 
 use std::{
@@ -46,6 +51,12 @@ use rustls::pki_types::PrivatePkcs8KeyDer;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::runtime::Handle;
 
+// Opt-out derive macros.
+#[cfg(feature = "derive")]
+pub use warqueen_derive::{NetReceive, NetSend};
+
+// TODO: Do something about this >w<.
+// How is it used by Quinn? Is it useful? Should it be configurable by the user?
 const SERVER_NAME: &str = "jaaj";
 
 fn async_runtime() -> Handle {
@@ -228,10 +239,25 @@ impl Drop for DisconnectionHandle {
 	}
 }
 
-/// Message type that is used for sending have to impl this trait.
+/// Message type that can be sent through the network.
+///
+/// A type marked by this trait can be the argument to the `S` type parameter of some
+/// generic types like [`ServerListenerNetworking<S, R>`] or [`ClientNetworking<S, R>`],
+/// which ends up as the type of the message argument to some related message sending methods.
+///
+/// If the default feature `derive` is enabled then it can be implemented by a derive macro.
 pub trait NetSend: Serialize + Send + 'static {}
 
-/// Message type that is used for receiving have to impl this trait.
+/// Message type that can be received from the network.
+///
+/// A type marked by this trait can be the argument to the `R` type parameter of some
+/// generic types like [`ServerListenerNetworking<S, R>`] or [`ClientNetworking<S, R>`],
+/// which ends up as the type returned by some related message receiving methods.
+///
+/// If the default feature `derive` is enabled then it can be implemented by a derive macro.
+///
+/// The bound to `DeserializeOwned` instead of `Deserialize<'de>`
+/// is a nuance that can be ignored, just derive serde's `Deserialize` as usual.
 pub trait NetReceive: DeserializeOwned + Send + 'static {}
 
 /// A piece of server networking that establishes connections to new clients

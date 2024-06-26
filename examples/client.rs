@@ -9,18 +9,15 @@ use std::{
 use serde::{Deserialize, Serialize};
 use warqueen::{ClientEvent, ClientNetworking, NetReceive, NetSend};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, NetSend)]
 enum MessageClientToServer {
 	String(String),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, NetReceive)]
 enum MessageServerToClient {
 	String(String),
 }
-
-impl NetSend for MessageClientToServer {}
-impl NetReceive for MessageServerToClient {}
 
 fn main() {
 	let server_address = "127.0.0.1:21001".parse().unwrap();

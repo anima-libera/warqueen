@@ -6,6 +6,8 @@ As the client, just connect, send messages, and poll received messages whenever,
 
 Message types are constrainted to only one possible type for sending and one possible type for receiving, swapping these type roles for the server and clients. An enum for both is natural.
 
+Hope you like :3
+
 ## Usage
 
 Let's start with a client.
@@ -13,18 +15,21 @@ Let's start with a client.
 First define the two message types for the communication with the server. The type that the client can send (to the server) and the type that the client can receive (from the server).
 
 ```rust
-#[derive(Serialize, Deserialize)]
+use serde::{Deserialize, Serialize};
+use warqueen::{NetReceive, NetSend};
+
+#[derive(Serialize, NetSend)]
 enum MessageClientToServer {
 	String(String),
 }
-impl NetSend for MessageClientToServer {}
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, NetReceive)]
 enum MessageServerToClient {
 	String(String),
 }
-impl NetReceive for MessageServerToClient {}
 ```
+
+The `NetSend` and `NetReceive` derive macros implement traits of the same name that allow marked types to be sent and received respectively.
 
 Then create the `ClientNetworking` that connects to a server, and use it in a loop.
 
@@ -62,7 +67,7 @@ client.disconnect().wait_for_proper_disconnection();
 
 Note that if the call to `ClientNetworking::disconnect` is not made in the main thread, then the `DisconnectionHandle` that it returns should be passed to the main thread (for example via a channel) and only then should `DisconnectionHandle::wait_for_proper_disconnection` be called. See the documentation for more.
 
-A server is very similar, it should use the same message types as the client, except with the traits `NetSend` and `NetReceive` implemented the other way around (because the server sends whan the client receives, and vice versa). If both the server and the client use the same type definitions then it is even better: both types can implement both traits.
+A server is very similar, it should use the same message types as the client, except with the traits `NetSend` and `NetReceive` implemented the other way around (because the server sends whan the client receives, and vice versa) (just swap the derives, including the serde ones). If both the server and the client use the same type definitions then it is even better: both types can implement both traits (`#[derive(Serialize, Deserialize, NetSend, NetReceived)]`).
 
 Then create the `ServerListenerNetworking` that listens for new clients that want to connect, and use it in a loop.
 

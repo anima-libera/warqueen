@@ -10,18 +10,15 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use warqueen::{ClientOnServerEvent, NetReceive, NetSend, ServerListenerNetworking};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, NetReceive)]
 enum MessageClientToServer {
 	String(String),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, NetSend)]
 enum MessageServerToClient {
 	String(String),
 }
-
-impl NetReceive for MessageClientToServer {}
-impl NetSend for MessageServerToClient {}
 
 fn main() {
 	let desired_port = 21001;
