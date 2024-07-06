@@ -101,16 +101,17 @@ impl SendingError {
 
 async fn send_message(
 	connection: &Connection,
-	message: impl Serialize,
+	message: &impl Serialize,
 ) -> Result<(), SendingError> {
 	#[inline]
 	/// Sends message and returns any error.
 	async fn internal_send_message(
 		connection: &Connection,
-		message: impl Serialize,
+		message: &impl Serialize,
 	) -> Result<(), SendingError> {
+		let message_raw = rmp_serde::encode::to_vec(message).unwrap();
+
 		let mut stream = connection.open_uni().await.map_err(SendingError::OpenUni)?;
-		let message_raw = rmp_serde::encode::to_vec(&message).unwrap();
 		stream.write_all(&message_raw).await.map_err(SendingError::WriteAll)?;
 		stream.finish().unwrap();
 		stream.stopped().await.map_err(SendingError::Stopped)?;
@@ -126,6 +127,38 @@ async fn send_message(
 		Ok(()) => Ok(()),
 		Err(Some(error)) => Err(error),
 		Err(None) => Ok(()),
+	}
+}
+
+/// A message to be sent.
+///
+/// Can either be given directly,
+/// or instead provided in a way that allows more flexibility to avoid cloning.
+#[non_exhaustive]
+pub enum Viewable<S: NetSend> {
+	/// The message to be sent is already provided here and owned.
+	Owned(S),
+	/// The message to be sent will be borrowable from the owned closure here.
+	/// Can be useful when a message to be sent can be a [`Sync`] borrowable part of
+	/// a bigger struct in an Arc, in such case there is no need
+	Closure(Box<dyn Fn(&()) -> &S + Send + Sync>),
+}
+
+impl<S: NetSend> Viewable<S> {
+	async fn send(&self, connection: &Connection) -> Result<(), SendingError> {
+		match self {
+			Viewable::Owned(message) => send_message(connection, message).await,
+			Viewable::Closure(call_to_view) => {
+				let message_view = call_to_view(&());
+				send_message(connection, message_view).await
+			},
+		}
+	}
+}
+
+impl<S: NetSend> From<S> for Viewable<S> {
+	fn from(message: S) -> Viewable<S> {
+		Viewable::Owned(message)
 	}
 }
 
@@ -230,7 +263,7 @@ impl Drop for DisconnectionHandle {
 			} else {
 				println!(
 					"Warning: `ClientDisconnectionHandle` dropped \
-				instead of being intentionally waited for"
+					instead of being intentionally waited for"
 				);
 				Self::check_that_we_are_on_the_main_thread();
 				self.actually_wait_for_proper_disconnection();
@@ -246,7 +279,7 @@ impl Drop for DisconnectionHandle {
 /// which ends up as the type of the message argument to some related message sending methods.
 ///
 /// If the default feature `derive` is enabled then it can be implemented by a derive macro.
-pub trait NetSend: Serialize + Send + 'static {}
+pub trait NetSend: Serialize + Send + Sync + 'static {}
 
 /// Message type that can be received from the network.
 ///
@@ -258,7 +291,7 @@ pub trait NetSend: Serialize + Send + 'static {}
 ///
 /// The bound to `DeserializeOwned` instead of `Deserialize<'de>`
 /// is a nuance that can be ignored, just derive serde's `Deserialize` as usual.
-pub trait NetReceive: DeserializeOwned + Send + 'static {}
+pub trait NetReceive: DeserializeOwned + Send + Sync + 'static {}
 
 /// A piece of server networking that establishes connections to new clients
 /// and provides these new clients (in the form of `ClientOnServerNetworking`s)
@@ -509,7 +542,8 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	pub fn send_message_to_client(&self, message: S) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
-			send_message(&connection, message).await.unwrap();
+			let message = message;
+			send_message(&connection, &message).await.unwrap();
 		});
 	}
 
@@ -640,7 +674,7 @@ struct ClientNetworkingConnecting<S: NetSend, R: NetReceive> {
 	/// is stored here and will be sent once the connection is established.
 	// Note: This is the reason why we have the `S` type on all the client-side types
 	// (and it was put on the server-side types as well for symetry >w<).
-	pending_sent_messages: Vec<S>,
+	pending_sent_messages: Vec<Viewable<S>>,
 }
 
 struct ClientNetworkingConnected<S: NetSend, R: NetReceive> {
@@ -782,10 +816,11 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		}
 	}
 
-	fn send_message_to_server(&self, message: S) {
+	fn send_message_to_server(&self, message: Viewable<S>) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
-			send_message(&connection, message).await.unwrap();
+			let message = message;
+			message.send(&connection).await.unwrap();
 		});
 	}
 
@@ -850,7 +885,13 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// # let _: ClientEvent<MessageServerToClient> =
 	/// #     client.poll_event_from_server().unwrap();
 	/// ```
-	pub fn send_message_to_server(&mut self, message: S) {
+	#[inline]
+	pub fn send_message_to_server(&mut self, message: impl Into<Viewable<S>>) {
+		let message: Viewable<S> = message.into();
+		self.send_message_to_server_already_viewable(message);
+	}
+
+	fn send_message_to_server_already_viewable(&mut self, message: Viewable<S>) {
 		self.connect_if_possible();
 		match &mut self.0 {
 			ClientNetworkingEnum::Connecting(connecting) => {
@@ -859,7 +900,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 			ClientNetworkingEnum::Connected(connected) => {
 				let connection = connected.connection.clone();
 				connected.async_runtime_handle.spawn(async move {
-					send_message(&connection, message).await.unwrap();
+					message.send(&connection).await.unwrap();
 				});
 			},
 			ClientNetworkingEnum::Disconnected => {
