@@ -900,6 +900,10 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	///                 MessageServerToClient::Hello => { /* ... */ },
 	///                 // Handle the different possible message variants...
 	///             },
+	///             ClientEvent::Connected => {
+	///                 // The client just established a connection with the server.
+	///                 // If such event is never polled then it means we can't connect.
+	///             },
 	///             ClientEvent::Disconnected => {
 	///                 // Handle the server disconnection...
 	///             },
