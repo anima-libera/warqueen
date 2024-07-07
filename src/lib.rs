@@ -48,7 +48,7 @@ use quinn::{
 	RecvStream, StoppedError, VarInt, WriteError,
 };
 use rustls::pki_types::PrivatePkcs8KeyDer;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
 use tokio::runtime::Handle;
 
 // Opt-out derive macros.
@@ -130,35 +130,58 @@ async fn send_message(
 	}
 }
 
-/// A message to be sent.
+/// Allows a sender to clonelessly send the content `T` as part of a message
+/// in the specific situation where:
+/// - an `&T` can be accessed from an `&C`, and
+/// - the `C` have a chance to be in an `Arc<C>`, and
+/// - we want to avoid cloning `T` if it can be avoided (for example if T is big).
 ///
-/// Can either be given directly,
-/// or instead provided in a way that allows more flexibility to avoid cloning.
-#[non_exhaustive]
-pub enum Viewable<S: NetSend> {
-	/// The message to be sent is already provided here and owned.
-	Owned(S),
-	/// The message to be sent will be borrowable from the owned closure here.
-	/// Can be useful when a message to be sent can be a [`Sync`] borrowable part of
-	/// a bigger struct in an Arc, in such case there is no need
-	Closure(Box<dyn Fn(&()) -> &S + Send + Sync>),
+/// See the `cloneless` example to see how to use this.
+// TODO: Better doc here.
+pub enum ClonelessSending<T: Serialize + DeserializeOwned, C> {
+	Owned(T),
+	View {
+		arc: Arc<C>,
+		complete: Box<dyn (Fn(&C) -> &T) + Send + Sync>,
+	},
 }
 
-impl<S: NetSend> Viewable<S> {
-	async fn send(&self, connection: &Connection) -> Result<(), SendingError> {
+impl<T: Serialize + DeserializeOwned, C> ClonelessSending<T, C> {
+	/// Consumes and returns the contained owned `T`.
+	///
+	/// Panics if it was not owned.
+	/// The received `ClonelessSending`s are always owned, this method is intended
+	/// to be used by the receiver to extract the received owned `T`s.
+	pub fn into_owned(self) -> T {
+		if let ClonelessSending::Owned(content) = self {
+			content
+		} else {
+			panic!("Completable::into_owned called on a non-owned variant");
+		}
+	}
+}
+
+impl<T: Serialize + DeserializeOwned, C> Serialize for ClonelessSending<T, C> {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
 		match self {
-			Viewable::Owned(message) => send_message(connection, message).await,
-			Viewable::Closure(call_to_view) => {
-				let message_view = call_to_view(&());
-				send_message(connection, message_view).await
+			ClonelessSending::Owned(content) => serializer.serialize_some(content),
+			ClonelessSending::View { arc, complete } => {
+				let content = complete(arc.as_ref());
+				serializer.serialize_some(content)
 			},
 		}
 	}
 }
 
-impl<S: NetSend> From<S> for Viewable<S> {
-	fn from(message: S) -> Viewable<S> {
-		Viewable::Owned(message)
+impl<'de, T: Serialize + DeserializeOwned, C> Deserialize<'de> for ClonelessSending<T, C> {
+	fn deserialize<D>(deserializer: D) -> Result<ClonelessSending<T, C>, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		T::deserialize(deserializer).map(ClonelessSending::Owned)
 	}
 }
 
@@ -542,7 +565,6 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	pub fn send_message_to_client(&self, message: S) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
-			let message = message;
 			send_message(&connection, &message).await.unwrap();
 		});
 	}
@@ -674,7 +696,7 @@ struct ClientNetworkingConnecting<S: NetSend, R: NetReceive> {
 	/// is stored here and will be sent once the connection is established.
 	// Note: This is the reason why we have the `S` type on all the client-side types
 	// (and it was put on the server-side types as well for symetry >w<).
-	pending_sent_messages: Vec<Viewable<S>>,
+	pending_sent_messages: Vec<S>,
 }
 
 struct ClientNetworkingConnected<S: NetSend, R: NetReceive> {
@@ -816,11 +838,11 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		}
 	}
 
-	fn send_message_to_server(&self, message: Viewable<S>) {
+	fn send_message_to_server(&self, message: S) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
 			let message = message;
-			message.send(&connection).await.unwrap();
+			send_message(&connection, &message).await.unwrap();
 		});
 	}
 
@@ -886,12 +908,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// #     client.poll_event_from_server().unwrap();
 	/// ```
 	#[inline]
-	pub fn send_message_to_server(&mut self, message: impl Into<Viewable<S>>) {
-		let message: Viewable<S> = message.into();
-		self.send_message_to_server_already_viewable(message);
-	}
-
-	fn send_message_to_server_already_viewable(&mut self, message: Viewable<S>) {
+	pub fn send_message_to_server(&mut self, message: S) {
 		self.connect_if_possible();
 		match &mut self.0 {
 			ClientNetworkingEnum::Connecting(connecting) => {
@@ -900,7 +917,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 			ClientNetworkingEnum::Connected(connected) => {
 				let connection = connected.connection.clone();
 				connected.async_runtime_handle.spawn(async move {
-					message.send(&connection).await.unwrap();
+					send_message(&connection, &message).await.unwrap();
 				});
 			},
 			ClientNetworkingEnum::Disconnected => {
