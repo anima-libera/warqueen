@@ -14,5 +14,7 @@
 - Add compression to the serialized messages, and make it configurable, maybe even by message.
 - Add a way to get a network usage estimation, like the amount of data sent/received so far, or like that but by message.
 - Make derive macros doc link to traits in Warqueen properly.
+- Fix `ClonelessSending` doc link to example, make it point to the file in the GitHub repo.
+- Rename `ClonelessSending::View::complete` to `access` or something.
 - Do we get rid of the rustfmt config?
 - Add a method to `ServerListenerNetworking` to no longer accept new connections.
