@@ -130,20 +130,37 @@ async fn send_message(
 	}
 }
 
+async fn receive_message_raw(stream: &mut RecvStream) -> Vec<u8> {
+	const ONE_GIGABYTE_IN_BYTES: usize = 1073741824;
+	stream.read_to_end(ONE_GIGABYTE_IN_BYTES).await.unwrap()
+}
+
 /// Allows a sender to clonelessly send the content `T` as part of a message
 /// in the specific situation where:
-/// - an `&T` can be accessed from an `&C`, and
-/// - the `C` have a chance to be in an `Arc<C>`, and
+/// - a `&T` can be accessed from a `&C`, and
+/// - the `C` has a chance to be in an `Arc<C>`, and
 /// - we want to avoid cloning `T` if it can be avoided (for example if T is big).
 ///
-/// See the `cloneless` example to see how to use this.
-// TODO: Better doc here.
+/// In short, in the situation described above, a message type could
+/// contain a `ClonelessSending<T, C>` instead of a `T`.
+/// A `ClonelessSending<T, C>` can be just like a `T` (when it has the `Owned` variant)
+/// and the receiver of such message will only see `Owned` variants of `ClonelessSending`s
+/// in the messages it receives.
+///
+/// A `ClonelessSending<T, C>` can be different from just a `T` though,
+/// it can be an `Arc<C>` accompanied by a function that allows to access a `&T` in a `&C`.
+/// This allows the sender to avoid cloning the `T` in the `Arc<C>` to put it in a message to send.
+///
+/// Even when a sender avoids cloning by providing a `View` variant, the receiver will
+/// receive the accessed `T` in an `Owned` variant.
+/// This is so thanks to [`serde::Serialize`] being implemented for `ClonelessSending<T, C>` in
+/// a way that just serializes the `T` it allows to access, and [`serde::Deserialize`] just
+/// deserializing a `T` into a `ClonelessSending::Owned(T)`.
+///
+/// *See the [`cloneless` example](../examples/cloneless.rs) for a proper usage guide.*
 pub enum ClonelessSending<T: Serialize + DeserializeOwned, C> {
 	Owned(T),
-	View {
-		arc: Arc<C>,
-		complete: Box<dyn (Fn(&C) -> &T) + Send + Sync>,
-	},
+	View { arc: Arc<C>, complete: fn(&C) -> &T },
 }
 
 impl<T: Serialize + DeserializeOwned, C> ClonelessSending<T, C> {
@@ -183,11 +200,6 @@ impl<'de, T: Serialize + DeserializeOwned, C> Deserialize<'de> for ClonelessSend
 	{
 		T::deserialize(deserializer).map(ClonelessSending::Owned)
 	}
-}
-
-async fn receive_message_raw(stream: &mut RecvStream) -> Vec<u8> {
-	const ONE_GIGABYTE_IN_BYTES: usize = 1073741824;
-	stream.read_to_end(ONE_GIGABYTE_IN_BYTES).await.unwrap()
 }
 
 /// A thingy that allows to make sure that a disconnection has the time to happen properly

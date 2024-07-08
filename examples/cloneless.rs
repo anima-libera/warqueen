@@ -106,7 +106,9 @@ fn client() {
 			println!("We send `struct_in_arc.data` to the server");
 			let message = MessageClientToServer::LotsOfData(ClonelessSending::View {
 				arc: Arc::clone(&struct_in_arc),
-				complete: Box::new(|some_struct: &SomeStruct| &some_struct.data),
+				// Here we explain to the serializer how to access the data we want to send
+				// in the `Arc`ed data that we share with it.
+				complete: |some_struct: &SomeStruct| &some_struct.data,
 			});
 			client.send_message_to_server(message);
 		}
@@ -158,6 +160,10 @@ fn server() {
 							println!("Client {client_id} says \"{content}\"");
 						},
 						MessageClientToServer::LotsOfData(content) => {
+							// Just like that, the receiver is not even really inconvenienced.
+							// It owns the content of the `ClonelessSending`,
+							// it receives the `Owned` variants
+							// even if the sender used the `View` variant to send the message.
 							let content = content.into_owned();
 							let size = content.wow_big_vec.len();
 							println!("Client {client_id} sent {size} bytes of data, that is a lot!");
