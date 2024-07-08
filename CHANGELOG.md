@@ -1,6 +1,8 @@
 
 ## 0.3.0
 
+Commit `397dd6e` tagged [v0.3](https://github.com/anima-libera/warqueen/tree/v0.3).
+
 ### Added
 
 - Type `ClonelessSending` that can be used in message types to allow senders to spare one clone of some data that is to be sent, only useful in a specific situation.
