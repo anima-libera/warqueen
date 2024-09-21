@@ -13,9 +13,9 @@ use warqueen::{
 	ServerListenerNetworking,
 };
 
-// This example is just the `client.rs` and `server.rs` examples combined.
+// This example is just the `example_client.rs` and `example_server.rs` examples combined.
 // It shows how both can be implemented into the same executable
-// and take advantage of the fact that we can thus avoid duplicating the message types
+// and takes advantage of the fact that we can thus avoid duplicating the message types
 // by making both be `NetSend` and `NetReceive`.
 
 #[derive(Serialize, Deserialize, NetSend, NetReceive)]

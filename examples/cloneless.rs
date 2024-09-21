@@ -13,7 +13,7 @@ use warqueen::{
 	ServerListenerNetworking,
 };
 
-// See `client.rs` and `server.rs` for more comments.
+// See `example_client.rs` and `example_server.rs` for more comments.
 // This examples focuces on a specific feature that allows the sender to avoid cloning
 // a part of a potentially big part of a message in a specific situation.
 
