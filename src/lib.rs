@@ -49,7 +49,7 @@ use quinn::{
 };
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
-use tokio::runtime::Handle;
+use tokio::{runtime::Handle, sync::oneshot};
 
 // Opt-out derive macros.
 #[cfg(feature = "derive")]
@@ -81,6 +81,104 @@ fn async_runtime() -> Handle {
 	async_runtime_handle
 }
 
+/// When a message is sent, it is sent asynchronously over a period.
+/// This handle allows to get to know if the message was really properly sent in the end
+/// or if something went wrong and what, the information is not available immediately.
+pub struct SendingStateHandle {
+	result_receiver: oneshot::Receiver<SendingResult>,
+}
+
+impl SendingStateHandle {
+	/// Has the message finished being sent? If yes, was is successfully sent?
+	/// The returned sending state answers these questions, and if the answer is that the message
+	/// is still being sent then it gives back this handle to ask again later.
+	pub fn get_state(mut self) -> SendingState {
+		match self.result_receiver.try_recv() {
+			Ok(result) => SendingState::Result(result),
+			Err(oneshot::error::TryRecvError::Closed) => SendingState::Result(SendingResult::Error),
+			Err(oneshot::error::TryRecvError::Empty) => SendingState::StillBeingSent(self),
+		}
+	}
+}
+
+/// Has the message finished being sent? With what [`SendingResult`]?
+pub enum SendingState {
+	/// The message is still in the process of being sent.
+	/// It will finish being sent (or fail) later.
+	/// The [`SendingStateHandle`] used to get this sending state is given back
+	/// to try again later.
+	StillBeingSent(SendingStateHandle),
+	/// The message is not being sent anymore.
+	/// It has either being successfully sent (in the case of [`SendingResult::Sent`])
+	/// or its sending has failed (any other `SendingResult` variant.)
+	Result(SendingResult),
+}
+
+/// Was the message successfully sent, or did it fail (and why)?
+pub enum SendingResult {
+	/// The message was sent with success!
+	Sent,
+	/// We (ourselves, not the peer) closed the connection before the message was entirely sent.
+	WeClosed,
+	/// The peer closed the connection (either intentionally or due to a panic/crash/shutdown)
+	/// before the message was entirely received.
+	PeerClosedOrDied,
+	/// An error occured which prevented the sending of the message.
+	Error,
+}
+
+impl SendingResult {
+	/// Has the message been successfully sent?
+	pub fn sent(&self) -> bool {
+		matches!(self, SendingResult::Sent)
+	}
+
+	/// Has the message failed to be sent due to the connection being closed?
+	///
+	/// Ignoring such situation might be appropriate.
+	pub fn failed_due_to_connection_closed(&self) -> bool {
+		matches!(
+			self,
+			SendingResult::WeClosed | SendingResult::PeerClosedOrDied
+		)
+	}
+
+	/// Has the message failed to be sent due to some error
+	/// (and not due to the connection being closed)?
+	pub fn failed_due_to_error(&self) -> bool {
+		matches!(self, SendingResult::Error)
+	}
+
+	fn from_result(result: Result<(), SendingError>) -> SendingResult {
+		match result {
+			Ok(()) => SendingResult::Sent,
+			Err(SendingError::OpenUni(connection_error))
+			| Err(SendingError::WriteAll(WriteError::ConnectionLost(connection_error)))
+			| Err(SendingError::Stopped(StoppedError::ConnectionLost(connection_error))) => {
+				SendingResult::from_connection_error(connection_error)
+			},
+			_ => {
+				// All the other cases are cases that should not happen in principle.
+				// Maybe panic or even `unreachable!()` here would be better?
+				SendingResult::Error
+			},
+		}
+	}
+
+	fn from_connection_error(connection_error: ConnectionError) -> SendingResult {
+		match connection_error {
+			ConnectionError::LocallyClosed => SendingResult::WeClosed,
+			ConnectionError::ApplicationClosed(_)
+			| ConnectionError::ConnectionClosed(_)
+			| ConnectionError::Reset
+			| ConnectionError::TimedOut => SendingResult::PeerClosedOrDied,
+			ConnectionError::VersionMismatch
+			| ConnectionError::TransportError(_)
+			| ConnectionError::CidsExhausted => SendingResult::Error,
+		}
+	}
+}
+
 #[derive(Debug)]
 enum SendingError {
 	OpenUni(ConnectionError),
@@ -88,46 +186,16 @@ enum SendingError {
 	Stopped(StoppedError),
 }
 
-impl SendingError {
-	fn ignore_locally_close_error(self) -> Option<SendingError> {
-		match self {
-			SendingError::OpenUni(ConnectionError::LocallyClosed)
-			| SendingError::WriteAll(WriteError::ConnectionLost(ConnectionError::LocallyClosed))
-			| SendingError::Stopped(StoppedError::ConnectionLost(ConnectionError::LocallyClosed)) => None,
-			error => Some(error),
-		}
-	}
-}
-
 async fn send_message(
 	connection: &Connection,
 	message: &impl Serialize,
 ) -> Result<(), SendingError> {
-	#[inline]
-	/// Sends message and returns any error.
-	async fn internal_send_message(
-		connection: &Connection,
-		message: &impl Serialize,
-	) -> Result<(), SendingError> {
-		let message_raw = rmp_serde::encode::to_vec(message).unwrap();
-
-		let mut stream = connection.open_uni().await.map_err(SendingError::OpenUni)?;
-		stream.write_all(&message_raw).await.map_err(SendingError::WriteAll)?;
-		stream.finish().unwrap();
-		stream.stopped().await.map_err(SendingError::Stopped)?;
-		Ok(())
-	}
-
-	let result = internal_send_message(connection, message).await;
-
-	// Here we ignore `ConnectionError::LocallyClosed` errors.
-	// It makes sense, we closed the connection, it is expected that the messages still
-	// in the process of being sent could just not be sent.
-	match result.map_err(SendingError::ignore_locally_close_error) {
-		Ok(()) => Ok(()),
-		Err(Some(error)) => Err(error),
-		Err(None) => Ok(()),
-	}
+	let message_raw = rmp_serde::encode::to_vec(message).unwrap();
+	let mut stream = connection.open_uni().await.map_err(SendingError::OpenUni)?;
+	stream.write_all(&message_raw).await.map_err(SendingError::WriteAll)?;
+	stream.finish().unwrap();
+	stream.stopped().await.map_err(SendingError::Stopped)?;
+	Ok(())
 }
 
 async fn receive_message_raw(stream: &mut RecvStream) -> Vec<u8> {
@@ -574,11 +642,14 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
 	/// ```
 	// Note: Could take `impl NetSend` instead of `S`, but then it won't
 	// look like the client-side API.
-	pub fn send_message_to_client(&self, message: S) {
+	pub fn send_message_to_client(&self, message: S) -> SendingStateHandle {
 		let connection = self.connection.clone();
+		let (result_sender, result_receiver) = oneshot::channel();
 		self.async_runtime_handle.spawn(async move {
-			send_message(&connection, &message).await.unwrap();
+			let result = send_message(&connection, &message).await;
+			let _ = result_sender.send(SendingResult::from_result(result));
 		});
+		SendingStateHandle { result_receiver }
 	}
 
 	/// If that client has sent any new messages, returns one of them.
@@ -708,7 +779,12 @@ struct ClientNetworkingConnecting<S: NetSend, R: NetReceive> {
 	/// is stored here and will be sent once the connection is established.
 	// Note: This is the reason why we have the `S` type on all the client-side types
 	// (and it was put on the server-side types as well for symetry >w<).
-	pending_sent_messages: Vec<S>,
+	pending_sent_messages: Vec<PendingMessage<S>>,
+}
+
+struct PendingMessage<S: NetSend> {
+	message: S,
+	result_sender: oneshot::Sender<SendingResult>,
 }
 
 struct ClientNetworkingConnected<S: NetSend, R: NetReceive> {
@@ -737,7 +813,16 @@ enum ClientNetworkingEnum<S: NetSend, R: NetReceive> {
 	/// When connected, we transition to the `Connected` variant.
 	Connecting(ClientNetworkingConnecting<S, R>),
 	Connected(ClientNetworkingConnected<S, R>),
-	Disconnected,
+	Disconnected(WhoClosed),
+}
+
+enum WhoClosed {
+	Us,
+	// Note: It seems that when the peer closes we just let the connection notice it
+	// and it just works, so this is never constricted yet.
+	// It might be useful later though and should be kept around.
+	#[allow(unused)]
+	ThePeer,
 }
 
 /// A connection to a server, from a client's point of view.
@@ -786,8 +871,11 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
 	fn connected(&mut self) -> Option<ClientNetworkingConnected<S, R>> {
 		self.connected_client_receiver.try_recv().ok().inspect(|connected_client| {
 			let pending_sent_messages = std::mem::take(&mut self.pending_sent_messages);
-			for message in pending_sent_messages.into_iter() {
-				connected_client.send_message_to_server(message);
+			for pending_message in pending_sent_messages.into_iter() {
+				connected_client.send_message_to_server_with_result_sender(
+					pending_message.message,
+					pending_message.result_sender,
+				);
 			}
 		})
 	}
@@ -850,11 +938,27 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 		}
 	}
 
-	fn send_message_to_server(&self, message: S) {
+	fn send_message_to_server(&self, message: S) -> SendingStateHandle {
+		let connection = self.connection.clone();
+		let (result_sender, result_receiver) = oneshot::channel();
+		self.async_runtime_handle.spawn(async move {
+			let message = message;
+			let result = send_message(&connection, &message).await;
+			let _ = result_sender.send(SendingResult::from_result(result));
+		});
+		SendingStateHandle { result_receiver }
+	}
+
+	fn send_message_to_server_with_result_sender(
+		&self,
+		message: S,
+		result_sender: oneshot::Sender<SendingResult>,
+	) {
 		let connection = self.connection.clone();
 		self.async_runtime_handle.spawn(async move {
 			let message = message;
-			send_message(&connection, &message).await.unwrap();
+			let result = send_message(&connection, &message).await;
+			let _ = result_sender.send(SendingResult::from_result(result));
 		});
 	}
 
@@ -920,20 +1024,23 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// #     client.poll_event_from_server().unwrap();
 	/// ```
 	#[inline]
-	pub fn send_message_to_server(&mut self, message: S) {
+	pub fn send_message_to_server(&mut self, message: S) -> SendingStateHandle {
 		self.connect_if_possible();
 		match &mut self.0 {
 			ClientNetworkingEnum::Connecting(connecting) => {
-				connecting.pending_sent_messages.push(message);
+				let (result_sender, result_receiver) = oneshot::channel();
+				connecting.pending_sent_messages.push(PendingMessage { message, result_sender });
+				SendingStateHandle { result_receiver }
 			},
-			ClientNetworkingEnum::Connected(connected) => {
-				let connection = connected.connection.clone();
-				connected.async_runtime_handle.spawn(async move {
-					send_message(&connection, &message).await.unwrap();
-				});
-			},
-			ClientNetworkingEnum::Disconnected => {
+			ClientNetworkingEnum::Connected(connected) => connected.send_message_to_server(message),
+			ClientNetworkingEnum::Disconnected(who_closed) => {
 				// TODO: Error maybe?
+				let (result_sender, result_receiver) = oneshot::channel();
+				let _ = result_sender.send(match who_closed {
+					WhoClosed::Us => SendingResult::WeClosed,
+					WhoClosed::ThePeer => SendingResult::PeerClosedOrDied,
+				});
+				SendingStateHandle { result_receiver }
 			},
 		}
 	}
@@ -988,16 +1095,19 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 		match &mut self.0 {
 			ClientNetworkingEnum::Connecting(_connecting) => None,
 			ClientNetworkingEnum::Connected(connected) => connected.poll_event_from_client(),
-			ClientNetworkingEnum::Disconnected => None,
+			ClientNetworkingEnum::Disconnected(_who_closed) => None,
 		}
 	}
 
 	/// Closes the connection with the server.
 	pub fn disconnect(&mut self) -> DisconnectionHandle {
-		match &self.0 {
-			ClientNetworkingEnum::Connecting(_connecting) => {
-				// TODO: What do we do here?
-				self.0 = ClientNetworkingEnum::Disconnected;
+		match &mut self.0 {
+			ClientNetworkingEnum::Connecting(connecting) => {
+				let pending_messages = std::mem::take(&mut connecting.pending_sent_messages);
+				for pending_message in pending_messages.into_iter() {
+					let _ = pending_message.result_sender.send(SendingResult::WeClosed);
+				}
+				self.0 = ClientNetworkingEnum::Disconnected(WhoClosed::Us);
 				DisconnectionHandle::without_barrier()
 			},
 			ClientNetworkingEnum::Connected(connected) => {
@@ -1010,10 +1120,10 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 					endpoint.wait_idle().await;
 					barrier_cloned.wait();
 				});
-				self.0 = ClientNetworkingEnum::Disconnected;
+				self.0 = ClientNetworkingEnum::Disconnected(WhoClosed::Us);
 				DisconnectionHandle::with_barrier(barrier)
 			},
-			ClientNetworkingEnum::Disconnected => {
+			ClientNetworkingEnum::Disconnected(_who_closed) => {
 				// TODO: Error? Is a double disconnection normal?
 				DisconnectionHandle::without_barrier()
 			},

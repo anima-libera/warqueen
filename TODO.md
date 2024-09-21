@@ -1,3 +1,11 @@
+## Fix
+
+- Error in Qwy's use of Warqueen, when ctrl-c-ing the server (it was sending the atlas over and over to the client, but that is irrelevant here, there was high traffic though):
+  - _Server error:_ thread 'Tokio Runtime Thread' panicked at /home/anima/.cargo/registry/src/index.crates.io-6f17d22bba15001f/warqueen-0.3.0/src/lib.rs:580:55: called `Result::unwrap()` on an `Err` value: OpenUni(ApplicationClosed(ApplicationClose { error_code: 0, reason: b"" }))
+  - _Client error:_ thread 'Tokio Runtime Thread' panicked at /home/anima/.cargo/registry/src/index.crates.io-6f17d22bba15001f/warqueen-0.3.0/src/lib.rs:816:65: called `Result::unwrap()` on an `Err` value: SendError { .. }
+
+## Add
+
 - Add a method (or some way) to `ClientNetworking` and `ClientOnServerNetworking` that returns a ping estimation.
 - Add ability to constrain order between messages, like having message sends take a `Vec<OrderingConstraint>` and return a `MessageSendingId`, and `OrderingConstraint` is like an enum with variants like `After(MessageSendingId)` and stuff. That could require connections to keep a set of `MessageSendingId`s of the messages still being sent.
 - Add a method to `ClientNetworking` and `ClientOnServerNetworking` that checks if all the messages that were being sent were actually sent (ie there is no messages still being sent at the moment).
