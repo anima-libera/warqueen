@@ -1,9 +1,3 @@
-## Fix
-
-- Error in Qwy's use of Warqueen, when ctrl-c-ing the server (it was sending the atlas over and over to the client, but that is irrelevant here, there was high traffic though):
-  - _Server error:_ thread 'Tokio Runtime Thread' panicked at /home/anima/.cargo/registry/src/index.crates.io-6f17d22bba15001f/warqueen-0.3.0/src/lib.rs:580:55: called `Result::unwrap()` on an `Err` value: OpenUni(ApplicationClosed(ApplicationClose { error_code: 0, reason: b"" }))
-  - _Client error:_ thread 'Tokio Runtime Thread' panicked at /home/anima/.cargo/registry/src/index.crates.io-6f17d22bba15001f/warqueen-0.3.0/src/lib.rs:816:65: called `Result::unwrap()` on an `Err` value: SendError { .. }
-
 ## Add
 
 - Add a method (or some way) to `ClientNetworking` and `ClientOnServerNetworking` that returns a ping estimation.
@@ -24,5 +18,4 @@
 - Make derive macros doc link to traits in Warqueen properly.
 - Fix `ClonelessSending` doc link to example, make it point to the file in the GitHub repo.
 - Rename `ClonelessSending::View::complete` to `access` or something.
-- Do we get rid of the rustfmt config?
 - Add a method to `ServerListenerNetworking` to no longer accept new connections.

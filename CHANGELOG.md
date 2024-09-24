@@ -1,4 +1,11 @@
 
+## 0.4.0
+
+### Added
+
+- Type `SendingStateHandle` that can be used to know if a specific message is still in the process of being sent or is done already, and if it was successfully sent or why it failed. Messages that fail being sent no longer cause a panic.
+- Client-side event `ClientEvent::FailedToConnect` that lets the client know when the connecting to the server gives up and fails, instead of never being notified.
+
 ## 0.3.0
 
 Commit `397dd6e` tagged [v0.3](https://github.com/anima-libera/warqueen/tree/v0.3).
