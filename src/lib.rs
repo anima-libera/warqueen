@@ -774,12 +774,17 @@ mod cerificate_verifier {
 
 struct ClientNetworkingConnecting<S: NetSend, R: NetReceive> {
 	/// Used only once.
-	connected_client_receiver: Receiver<ClientNetworkingConnected<S, R>>,
+	connected_client_receiver: Receiver<ConnectedOrTimeout<S, R>>,
 	/// A message sent while the connection is still being established
 	/// is stored here and will be sent once the connection is established.
 	// Note: This is the reason why we have the `S` type on all the client-side types
 	// (and it was put on the server-side types as well for symetry >w<).
 	pending_sent_messages: Vec<PendingMessage<S>>,
+}
+
+enum ConnectedOrTimeout<S: NetSend, R: NetReceive> {
+	Connected(ClientNetworkingConnected<S, R>),
+	Timeout,
 }
 
 struct PendingMessage<S: NetSend> {
@@ -806,6 +811,8 @@ pub enum ClientEvent<R: NetReceive> {
 	Message(R),
 	/// We got disconnected from the server.
 	Disconnected,
+	/// We could not even establish a connection (in a reasonable amount of time).
+	FailedToConnect,
 }
 
 enum ClientNetworkingEnum<S: NetSend, R: NetReceive> {
@@ -823,6 +830,11 @@ enum WhoClosed {
 	// It might be useful later though and should be kept around.
 	#[allow(unused)]
 	ThePeer,
+	/// We timeouted waiting for a connection with the peer to be established.
+	/// The peer might as well not exist.
+	ThePeerDidntEvenConnect {
+		failed_to_connect_event_already_polled: bool,
+	},
 }
 
 /// A connection to a server, from a client's point of view.
@@ -857,27 +869,39 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
 				.unwrap(),
 			)));
 
-			let connection = endpoint.connect(server_address, SERVER_NAME).unwrap().await.unwrap();
-
-			let connected_client =
-				ClientNetworkingConnected::new(async_runtime_handle_cloned, connection, endpoint);
-
-			connected_client_sender.send(connected_client).unwrap();
+			let connection_result = endpoint.connect(server_address, SERVER_NAME).unwrap().await;
+			match connection_result {
+				Ok(connection) => {
+					let connected_client =
+						ClientNetworkingConnected::new(async_runtime_handle_cloned, connection, endpoint);
+					connected_client_sender
+						.send(ConnectedOrTimeout::Connected(connected_client))
+						.unwrap();
+				},
+				Err(ConnectionError::TimedOut) => {
+					connected_client_sender.send(ConnectedOrTimeout::Timeout).unwrap();
+				},
+				Err(error) => panic!("{error:?}"),
+			}
 		});
 
 		ClientNetworkingConnecting { connected_client_receiver, pending_sent_messages: vec![] }
 	}
 
-	fn connected(&mut self) -> Option<ClientNetworkingConnected<S, R>> {
-		self.connected_client_receiver.try_recv().ok().inspect(|connected_client| {
-			let pending_sent_messages = std::mem::take(&mut self.pending_sent_messages);
-			for pending_message in pending_sent_messages.into_iter() {
-				connected_client.send_message_to_server_with_result_sender(
-					pending_message.message,
-					pending_message.result_sender,
-				);
-			}
-		})
+	fn connected(&mut self) -> Option<ConnectedOrTimeout<S, R>> {
+		match self.connected_client_receiver.try_recv().ok()? {
+			ConnectedOrTimeout::Connected(connected_client) => {
+				let pending_sent_messages = std::mem::take(&mut self.pending_sent_messages);
+				for pending_message in pending_sent_messages.into_iter() {
+					connected_client.send_message_to_server_with_result_sender(
+						pending_message.message,
+						pending_message.result_sender,
+					);
+				}
+				Some(ConnectedOrTimeout::Connected(connected_client))
+			},
+			ConnectedOrTimeout::Timeout => Some(ConnectedOrTimeout::Timeout),
+		}
 	}
 }
 
@@ -983,8 +1007,17 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	/// Transitions to the `Connected` variant if we finally established the connection.
 	fn connect_if_possible(&mut self) {
 		if let ClientNetworkingEnum::Connecting(connecting) = &mut self.0 {
-			if let Some(connected) = connecting.connected() {
-				self.0 = ClientNetworkingEnum::Connected(connected);
+			if let Some(connected_or_timeout) = connecting.connected() {
+				match connected_or_timeout {
+					ConnectedOrTimeout::Connected(connected) => {
+						self.0 = ClientNetworkingEnum::Connected(connected);
+					},
+					ConnectedOrTimeout::Timeout => {
+						self.0 = ClientNetworkingEnum::Disconnected(WhoClosed::ThePeerDidntEvenConnect {
+							failed_to_connect_event_already_polled: false,
+						});
+					},
+				}
 			}
 		}
 	}
@@ -1039,6 +1072,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 				let _ = result_sender.send(match who_closed {
 					WhoClosed::Us => SendingResult::WeClosed,
 					WhoClosed::ThePeer => SendingResult::PeerClosedOrDied,
+					WhoClosed::ThePeerDidntEvenConnect { .. } => SendingResult::PeerClosedOrDied,
 				});
 				SendingStateHandle { result_receiver }
 			},
@@ -1084,6 +1118,11 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 	///             ClientEvent::Disconnected => {
 	///                 // Handle the server disconnection...
 	///             },
+	///             ClientEvent::FailedToConnect => {
+	///                 // We failed to connect to the server. It could mean many things,
+	///                 // maybe the address and port we tried are wrong, etc.
+	///                 // Maybe retry or fail gracefully.
+	///             },
 	///         }
 	///     }
 	/// }
@@ -1095,6 +1134,12 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
 		match &mut self.0 {
 			ClientNetworkingEnum::Connecting(_connecting) => None,
 			ClientNetworkingEnum::Connected(connected) => connected.poll_event_from_client(),
+			ClientNetworkingEnum::Disconnected(WhoClosed::ThePeerDidntEvenConnect {
+				failed_to_connect_event_already_polled,
+			}) if !*failed_to_connect_event_already_polled => {
+				*failed_to_connect_event_already_polled = true;
+				Some(ClientEvent::FailedToConnect)
+			},
 			ClientNetworkingEnum::Disconnected(_who_closed) => None,
 		}
 	}

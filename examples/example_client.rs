@@ -49,6 +49,10 @@ fn main() {
 					println!("Server disconnected, let's terminate");
 					return;
 				},
+				ClientEvent::FailedToConnect => {
+					println!("Failed to connect, let's terminate");
+					return;
+				},
 			}
 		}
 
