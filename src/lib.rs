@@ -784,8 +784,7 @@ mod cerificate_verifier {
 }
 
 struct ClientNetworkingConnecting<S: NetSend, R: NetReceive> {
-    /// Used only once.
-    connected_client_receiver: Receiver<ConnectedOrTimeout<S, R>>,
+    connected_client_receiver: oneshot::Receiver<ConnectedOrTimeout<S, R>>,
     /// A message sent while the connection is still being established
     /// is stored here and will be sent once the connection is established.
     // Note: This is the reason why we have the `S` type on all the client-side types
@@ -865,7 +864,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
 
         let async_runtime_handle = async_runtime();
 
-        let (connected_client_sender, connected_client_receiver) = std::sync::mpsc::channel();
+        let (connected_client_sender, connected_client_receiver) = oneshot::channel();
 
         let async_runtime_handle_cloned = async_runtime_handle.clone();
 
@@ -892,14 +891,11 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
                         connection,
                         endpoint,
                     );
-                    connected_client_sender
-                        .send(ConnectedOrTimeout::Connected(connected_client))
-                        .unwrap();
+                    let _ = connected_client_sender
+                        .send(ConnectedOrTimeout::Connected(connected_client));
                 }
                 Err(ConnectionError::TimedOut) => {
-                    connected_client_sender
-                        .send(ConnectedOrTimeout::Timeout)
-                        .unwrap();
+                    let _ = connected_client_sender.send(ConnectedOrTimeout::Timeout);
                 }
                 Err(error) => panic!("{error:?}"),
             }
