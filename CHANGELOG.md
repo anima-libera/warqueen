@@ -1,5 +1,13 @@
 
+## 0.4.1
+
+### Fixed
+
+- Function `ServerListenerNetworking::new` used to panic (on an unwrap) when the `desired_port` is not available. Now it tries the next port, and the next, etc., until it finds an available port; as the doc already claimed it does.
+
 ## 0.4.0
+
+Commit tagged [v0.4](https://github.com/anima-libera/warqueen/tree/v0.4).
 
 ### Added
 
@@ -8,7 +16,7 @@
 
 ## 0.3.0
 
-Commit `397dd6e` tagged [v0.3](https://github.com/anima-libera/warqueen/tree/v0.3).
+Commit tagged [v0.3](https://github.com/anima-libera/warqueen/tree/v0.3).
 
 ### Added
 
@@ -19,7 +27,7 @@ Commit `397dd6e` tagged [v0.3](https://github.com/anima-libera/warqueen/tree/v0.
 
 ## 0.2.0
 
-Commit `52f652e` tagged [v0.2](https://github.com/anima-libera/warqueen/tree/v0.2).
+Commit tagged [v0.2](https://github.com/anima-libera/warqueen/tree/v0.2).
 
 ### Added
 
@@ -28,6 +36,6 @@ Commit `52f652e` tagged [v0.2](https://github.com/anima-libera/warqueen/tree/v0.
 
 ## 0.1.0
 
-Commit `6b365fc` tagged [v0.1](https://github.com/anima-libera/warqueen/tree/v0.1).
+Commit tagged [v0.1](https://github.com/anima-libera/warqueen/tree/v0.1).
 
 First released version.

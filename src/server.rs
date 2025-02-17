@@ -1,6 +1,6 @@
 use std::{
     marker::PhantomData,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
     sync::{mpsc::Receiver, Arc, Barrier},
 };
 
@@ -64,9 +64,37 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
             QuicServerConfig::try_from(server_crypto).unwrap(),
         ));
 
-        let desired_server_address =
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), desired_port);
-        let socket = std::net::UdpSocket::bind(desired_server_address).unwrap();
+        // `std::net::UdpSocket::bind` can try multiple addresses until one was available.
+        // The addresses we try are 127.0.0.1 (localhost) and some port.
+        // Hopefully the port `desired_port` is available, but if not then we just try the port
+        // that follows, and the next, etc., until we find an available one.
+        //
+        // The doc of this very function says that this is what might happen.
+        #[derive(Clone)]
+        struct AddressesToTry {
+            ip_v4_addr: Ipv4Addr,
+            next_port: u16,
+        }
+        impl Iterator for AddressesToTry {
+            type Item = SocketAddr;
+            fn next(&mut self) -> Option<SocketAddr> {
+                let port = self.next_port;
+                self.next_port = self.next_port.wrapping_add(1);
+                Some(SocketAddr::new(IpAddr::V4(self.ip_v4_addr), port))
+            }
+        }
+        impl ToSocketAddrs for AddressesToTry {
+            type Iter = AddressesToTry;
+            fn to_socket_addrs(&self) -> std::io::Result<AddressesToTry> {
+                Ok(self.clone())
+            }
+        }
+        let addresses_to_try = AddressesToTry {
+            ip_v4_addr: Ipv4Addr::new(127, 0, 0, 1),
+            next_port: desired_port,
+        };
+
+        let socket = std::net::UdpSocket::bind(addresses_to_try).unwrap();
         let actual_server_address = socket.local_addr().unwrap();
 
         let async_runtime_handle_cloned = async_runtime_handle.clone();
