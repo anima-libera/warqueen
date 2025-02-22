@@ -43,7 +43,7 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
     ///
     /// The port actually used may be different from the desired port,
     /// see [`ServerListenerNetworking::server_port`].
-    pub fn new(desired_port: u16) -> ServerListenerNetworking<S, R> {
+    pub fn new(address: IpAddr, desired_port: u16) -> ServerListenerNetworking<S, R> {
         rustls::crypto::ring::default_provider()
             .install_default()
             .unwrap();
@@ -64,15 +64,14 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
             QuicServerConfig::try_from(server_crypto).unwrap(),
         ));
 
-        // `std::net::UdpSocket::bind` can try multiple addresses until one was available.
-        // The addresses we try are 127.0.0.1 (localhost) and some port.
+        // `std::net::UdpSocket::bind` can try multiple addresses until one works.
         // Hopefully the port `desired_port` is available, but if not then we just try the port
         // that follows, and the next, etc., until we find an available one.
         //
         // The doc of this very function says that this is what might happen.
         #[derive(Clone)]
         struct AddressesToTry {
-            ip_v4_addr: Ipv4Addr,
+            ip_addr: IpAddr,
             next_port: u16,
         }
         impl Iterator for AddressesToTry {
@@ -80,7 +79,7 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
             fn next(&mut self) -> Option<SocketAddr> {
                 let port = self.next_port;
                 self.next_port = self.next_port.wrapping_add(1);
-                Some(SocketAddr::new(IpAddr::V4(self.ip_v4_addr), port))
+                Some(SocketAddr::new(self.ip_addr, port))
             }
         }
         impl ToSocketAddrs for AddressesToTry {
@@ -90,7 +89,7 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
             }
         }
         let addresses_to_try = AddressesToTry {
-            ip_v4_addr: Ipv4Addr::new(127, 0, 0, 1),
+            ip_addr: address,
             next_port: desired_port,
         };
 

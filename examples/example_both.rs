@@ -1,4 +1,5 @@
 use std::{
+    net::{IpAddr, Ipv4Addr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -90,8 +91,9 @@ fn client() {
 
 fn server() {
     let desired_port = 21001;
+    let address = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
     // Full type is `ServerListenerNetworking<MessageServerToClient, MessageClientToServer>`.
-    let server_listener = ServerListenerNetworking::new(desired_port);
+    let server_listener = ServerListenerNetworking::new(address, desired_port);
     let actual_port = server_listener.server_port();
     println!("Opened on port {actual_port}");
 

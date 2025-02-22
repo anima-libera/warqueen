@@ -1,4 +1,10 @@
 
+## 0.4.2
+
+### Fixed
+
+- Function `ServerListenerNetworking::new` now takes the server IP address too, so that it actually works on actual networks instead of being limited to localhost (I am *not* a networking person).
+
 ## 0.4.1
 
 ### Fixed
