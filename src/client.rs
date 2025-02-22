@@ -164,7 +164,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
         let async_runtime_handle_cloned = async_runtime_handle.clone();
 
         async_runtime_handle.spawn(async move {
-            let mut endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+            let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
 
             endpoint.set_default_client_config(ClientConfig::new(Arc::new(
                 QuicClientConfig::try_from(

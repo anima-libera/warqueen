@@ -1,4 +1,10 @@
 
+## 0.4.3
+
+### Fixed
+
+- Function `ClientNetworkingConnecting::new` may(?) now work across an actual network.
+
 ## 0.4.2
 
 ### Fixed
