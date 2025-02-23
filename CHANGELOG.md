@@ -1,4 +1,10 @@
 
+## 0.4.4
+
+### Fixed
+
+- Client connection on server now handles time out as a disconnection event instead of panicking.
+
 ## 0.4.3
 
 ### Fixed
