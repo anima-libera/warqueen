@@ -115,9 +115,16 @@ pub enum ClientEvent<R: NetReceive> {
     /// The server sent us a message.
     Message(R),
     /// We got disconnected from the server.
-    Disconnected,
+    Disconnected(ClientDisconnectionDetails),
     /// We could not even establish a connection (in a reasonable amount of time).
     FailedToConnect,
+}
+
+/// Details about a disconnection event [`ClientEvent::Disconnected`].
+pub enum ClientDisconnectionDetails {
+    None,
+    /// The server timed out (failed to react in time to stuff).
+    Timeout,
 }
 
 enum ClientNetworkingEnum<S: NetSend, R: NetReceive> {
@@ -244,18 +251,23 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
                     }
                     Err(ConnectionError::ApplicationClosed(_thingy)) => {
                         // TODO: Deserialize the reason from `_thingy` and put it in the event.
-                        let event = ClientEvent::Disconnected;
+                        let event = ClientEvent::Disconnected(ClientDisconnectionDetails::None);
                         receiving_sender.send(event).unwrap();
                         return;
                     }
                     Err(ConnectionError::ConnectionClosed(_thingy)) => {
                         // TODO: Deserialize the reason from `_thingy` and put it in the event.
-                        let event = ClientEvent::Disconnected;
+                        let event = ClientEvent::Disconnected(ClientDisconnectionDetails::None);
                         receiving_sender.send(event).unwrap();
                         return;
                     }
                     Err(ConnectionError::LocallyClosed) => {
                         // Our own side have closed the connection, let's just wrap up as expected.
+                        return;
+                    }
+                    Err(ConnectionError::TimedOut) => {
+                        let event = ClientEvent::Disconnected(ClientDisconnectionDetails::Timeout);
+                        receiving_sender.send(event).unwrap();
                         return;
                     }
                     Err(error) => {
@@ -434,7 +446,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
     ///                 // The client just established a connection with the server.
     ///                 // If such event is never polled then it means we can't connect.
     ///             },
-    ///             ClientEvent::Disconnected => {
+    ///             ClientEvent::Disconnected(details) => {
     ///                 // Handle the server disconnection...
     ///             },
     ///             ClientEvent::FailedToConnect => {

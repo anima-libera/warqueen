@@ -48,11 +48,12 @@ mod server;
 #[cfg(feature = "derive")]
 pub use warqueen_derive::{NetReceive, NetSend};
 
-pub use client::{ClientEvent, ClientNetworking};
+pub use client::{ClientDisconnectionDetails, ClientEvent, ClientNetworking};
 pub use cloneless::ClonelessSending;
 pub use disconnection::DisconnectionHandle;
 pub use net_traits::{NetReceive, NetSend};
 pub use sending::{SendingResult, SendingState, SendingStateHandle};
 pub use server::{
-    ClientOnServerEvent, ClientOnServerNetworking, DisconnectionDetails, ServerListenerNetworking,
+    ClientOnServerDisconnectionDetails, ClientOnServerEvent, ClientOnServerNetworking,
+    ServerListenerNetworking,
 };

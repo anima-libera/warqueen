@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use warqueen::{ClientEvent, ClientNetworking, NetReceive, NetSend};
+use warqueen::{ClientDisconnectionDetails, ClientEvent, ClientNetworking, NetReceive, NetSend};
 
 #[derive(Serialize, NetSend)]
 enum MessageClientToServer {
@@ -47,8 +47,15 @@ fn main() {
                         println!("The server says \"{content}\"")
                     }
                 },
-                ClientEvent::Disconnected => {
-                    println!("Server disconnected, let's terminate");
+                ClientEvent::Disconnected(details) => {
+                    match details {
+                        ClientDisconnectionDetails::None => {
+                            println!("Server disconnected, let's terminate");
+                        }
+                        ClientDisconnectionDetails::Timeout => {
+                            println!("Server timed out, let's terminate");
+                        }
+                    }
                     return;
                 }
                 ClientEvent::FailedToConnect => {

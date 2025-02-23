@@ -202,11 +202,11 @@ pub enum ClientOnServerEvent<R: NetReceive> {
     /// The client sent us a message.
     Message(R),
     /// We got disconnected from the client.
-    Disconnected(DisconnectionDetails),
+    Disconnected(ClientOnServerDisconnectionDetails),
 }
 
 /// Details about a disconnection event [`ClientOnServerEvent::Disconnected`].
-pub enum DisconnectionDetails {
+pub enum ClientOnServerDisconnectionDetails {
     None,
     /// The client timed out (failed to react in time to stuff).
     Timeout,
@@ -237,13 +237,17 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
                     }
                     Err(ConnectionError::ApplicationClosed(_thingy)) => {
                         // TODO: Deserialize the reason from `_thingy` and put it in the event.
-                        let event = ClientOnServerEvent::Disconnected(DisconnectionDetails::None);
+                        let event = ClientOnServerEvent::Disconnected(
+                            ClientOnServerDisconnectionDetails::None,
+                        );
                         receiving_sender.send(event).unwrap();
                         return;
                     }
                     Err(ConnectionError::ConnectionClosed(_thingy)) => {
                         // TODO: Deserialize the reason from `_thingy` and put it in the event.
-                        let event = ClientOnServerEvent::Disconnected(DisconnectionDetails::None);
+                        let event = ClientOnServerEvent::Disconnected(
+                            ClientOnServerDisconnectionDetails::None,
+                        );
                         receiving_sender.send(event).unwrap();
                         return;
                     }
@@ -252,8 +256,9 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
                         return;
                     }
                     Err(ConnectionError::TimedOut) => {
-                        let event =
-                            ClientOnServerEvent::Disconnected(DisconnectionDetails::Timeout);
+                        let event = ClientOnServerEvent::Disconnected(
+                            ClientOnServerDisconnectionDetails::Timeout,
+                        );
                         receiving_sender.send(event).unwrap();
                         return;
                     }

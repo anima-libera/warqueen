@@ -3,7 +3,7 @@
 
 ### Fixed
 
-- Client connection on server now handles time out as a disconnection event instead of panicking.
+- Connection time out is now handled as a disconnection event instead of by a panic, for both sides (server and client).
 
 ## 0.4.3
 

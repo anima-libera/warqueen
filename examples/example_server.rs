@@ -10,7 +10,8 @@ use std::{
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use warqueen::{
-    ClientOnServerEvent, DisconnectionDetails, NetReceive, NetSend, ServerListenerNetworking,
+    ClientOnServerDisconnectionDetails, ClientOnServerEvent, NetReceive, NetSend,
+    ServerListenerNetworking,
 };
 
 #[derive(Deserialize, NetReceive)]
@@ -70,10 +71,10 @@ fn main() {
                     },
                     ClientOnServerEvent::Disconnected(details) => {
                         match details {
-                            DisconnectionDetails::None => {
+                            ClientOnServerDisconnectionDetails::None => {
                                 println!("Client {client_id} disconnected")
                             }
-                            DisconnectionDetails::Timeout => {
+                            ClientOnServerDisconnectionDetails::Timeout => {
                                 println!("Client {client_id} timed out")
                             }
                         }
