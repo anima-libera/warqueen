@@ -1,6 +1,6 @@
 use std::{
     marker::PhantomData,
-    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     sync::{mpsc::Receiver, Arc, Barrier},
 };
 
@@ -201,7 +201,14 @@ pub enum ClientOnServerEvent<R: NetReceive> {
     /// The client sent us a message.
     Message(R),
     /// We got disconnected from the client.
-    Disconnected,
+    Disconnected(DisconnectionDetails),
+}
+
+/// Details about a disconnection event [`ClientOnServerEvent::Disconnected`].
+pub enum DisconnectionDetails {
+    None,
+    /// The client timed out (failed to react in time to stuff).
+    Timeout,
 }
 
 impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
@@ -229,18 +236,24 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
                     }
                     Err(ConnectionError::ApplicationClosed(_thingy)) => {
                         // TODO: Deserialize the reason from `_thingy` and put it in the event.
-                        let event = ClientOnServerEvent::Disconnected;
+                        let event = ClientOnServerEvent::Disconnected(DisconnectionDetails::None);
                         receiving_sender.send(event).unwrap();
                         return;
                     }
                     Err(ConnectionError::ConnectionClosed(_thingy)) => {
                         // TODO: Deserialize the reason from `_thingy` and put it in the event.
-                        let event = ClientOnServerEvent::Disconnected;
+                        let event = ClientOnServerEvent::Disconnected(DisconnectionDetails::None);
                         receiving_sender.send(event).unwrap();
                         return;
                     }
                     Err(ConnectionError::LocallyClosed) => {
                         // Our own side have closed the connection, let's just wrap up as expected.
+                        return;
+                    }
+                    Err(ConnectionError::TimedOut) => {
+                        let event =
+                            ClientOnServerEvent::Disconnected(DisconnectionDetails::Timeout);
+                        receiving_sender.send(event).unwrap();
                         return;
                     }
                     Err(error) => {

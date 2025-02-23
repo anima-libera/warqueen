@@ -53,4 +53,6 @@ pub use cloneless::ClonelessSending;
 pub use disconnection::DisconnectionHandle;
 pub use net_traits::{NetReceive, NetSend};
 pub use sending::{SendingResult, SendingState, SendingStateHandle};
-pub use server::{ClientOnServerEvent, ClientOnServerNetworking, ServerListenerNetworking};
+pub use server::{
+    ClientOnServerEvent, ClientOnServerNetworking, DisconnectionDetails, ServerListenerNetworking,
+};

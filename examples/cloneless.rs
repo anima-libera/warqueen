@@ -10,8 +10,8 @@ use std::{
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use warqueen::{
-    ClientEvent, ClientNetworking, ClientOnServerEvent, ClonelessSending, NetReceive, NetSend,
-    ServerListenerNetworking,
+    ClientEvent, ClientNetworking, ClientOnServerEvent, ClonelessSending, DisconnectionDetails,
+    NetReceive, NetSend, ServerListenerNetworking,
 };
 
 // See `example_client.rs` and `example_server.rs` for more comments.
@@ -181,8 +181,15 @@ fn server() {
                             );
                         }
                     },
-                    ClientOnServerEvent::Disconnected => {
-                        println!("Client {client_id} disconnected");
+                    ClientOnServerEvent::Disconnected(details) => {
+                        match details {
+                            DisconnectionDetails::None => {
+                                println!("Client {client_id} disconnected")
+                            }
+                            DisconnectionDetails::Timeout => {
+                                println!("Client {client_id} timed out")
+                            }
+                        }
                         disconnected_ids.push(*client_id);
                     }
                 }
