@@ -162,7 +162,8 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
     /// # impl NetReceive for MessageClientToServer {}
     /// #
     /// # let port = 21001;
-    /// let server = ServerListenerNetworking::new(port);
+    /// # let our_own_address = std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
+    /// let server = ServerListenerNetworking::new(our_own_address, port);
     ///
     /// loop {
     ///     while let Some(new_client) = server.poll_client() {
@@ -301,7 +302,8 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
     /// # impl NetReceive for MessageClientToServer {}
     /// #
     /// # let port = 21001;
-    /// # let server = ServerListenerNetworking::new(port);
+    /// # let our_own_address = std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
+    /// # let server = ServerListenerNetworking::new(our_own_address, port);
     /// let client = server.poll_client().unwrap();
     ///
     /// client.send_message_to_client(MessageServerToClient::Hello);
@@ -344,7 +346,8 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
     /// impl NetReceive for MessageClientToServer {}
     ///
     /// # let port = 21001;
-    /// # let server = ServerListenerNetworking::new(port);
+    /// # let our_own_address = std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
+    /// # let server = ServerListenerNetworking::new(our_own_address, port);
     /// let client = server.poll_client().unwrap();
     ///
     /// loop {
@@ -354,7 +357,7 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
     ///                 MessageClientToServer::Hello => { /* ... */ },
     ///                 // Handle the different possible message variants...
     ///             },
-    ///             ClientOnServerEvent::Disconnected => {
+    ///             ClientOnServerEvent::Disconnected(details) => {
     ///                 // Handle the client disconnection...
     ///             },
     ///         }
