@@ -5,10 +5,10 @@
 //!
 //! - The server and the client are intended to run in a loop.
 //! - They can poll received messages and events when they want,
-//! and send messages when they want.
+//!   and send messages when they want.
 //! - There is a message type for client-to-server messaging,
-//! and a message type for server-to-client messaging, and that is all.
-//! These two types can be enums to make up for that.
+//!   and a message type for server-to-client messaging, and that is all.
+//!   These two types can be enums to make up for that.
 //! - Nya :3
 //!
 //! Both the client code and server code are supposed to have vaguely the following structure:
@@ -32,7 +32,7 @@
 //! Things to keep in mind:
 //! - Do not use, lacks plenty of features.
 //! - Beware the [`DisconnectionHandle`]s that are better waited for on the main thread
-//! (if you have multiple threads and disconnect from a thread other than the main thread).
+//!   (if you have multiple threads and disconnect from a thread other than the main thread).
 //! - Good luck out there!
 
 mod async_runtime;
