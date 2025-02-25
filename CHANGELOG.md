@@ -1,4 +1,10 @@
 
+## 0.4.5
+
+### Fixed
+
+- Connection lost errors that happen while reading a stream are now handled as a disconnection event instead of by a panic, for both sides (server and client).
+
 ## 0.4.4
 
 ### Fixed

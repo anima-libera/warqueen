@@ -5,7 +5,8 @@ use std::{
 };
 
 use quinn::{
-    crypto::rustls::QuicClientConfig, ClientConfig, Connection, ConnectionError, Endpoint, VarInt,
+    crypto::rustls::QuicClientConfig, ClientConfig, Connection, ConnectionError, Endpoint,
+    ReadError, ReadToEndError, VarInt,
 };
 use tokio::{runtime::Handle, sync::oneshot};
 
@@ -226,6 +227,32 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
     }
 }
 
+fn connection_error_to_client_event<R: NetReceive>(
+    error: ConnectionError,
+) -> Option<ClientEvent<R>> {
+    match error {
+        ConnectionError::ApplicationClosed(_thingy) => {
+            // TODO: Deserialize the reason from `_thingy` and put it in the event.
+            Some(ClientEvent::Disconnected(ClientDisconnectionDetails::None))
+        }
+        ConnectionError::ConnectionClosed(_thingy) => {
+            // TODO: Deserialize the reason from `_thingy` and put it in the event.
+            Some(ClientEvent::Disconnected(ClientDisconnectionDetails::None))
+        }
+        ConnectionError::LocallyClosed => {
+            // Our own side have closed the connection, let's just wrap up as expected.
+            None
+        }
+        ConnectionError::TimedOut => Some(ClientEvent::Disconnected(
+            ClientDisconnectionDetails::Timeout,
+        )),
+        error => {
+            // TODO: Handle more errors to pass as events to the user.
+            panic!("{error}");
+        }
+    }
+}
+
 impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
     fn new(
         async_runtime_handle: Handle,
@@ -243,36 +270,36 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
                         // to get the entire message that we can then provide to the user.
                         let receiving_sender_cloned = receiving_sender.clone();
                         tokio::spawn(async move {
-                            let message_raw = receive_message_raw(&mut stream).await;
-                            let message: R = rmp_serde::decode::from_slice(&message_raw).unwrap();
-                            let event = ClientEvent::Message(message);
-                            receiving_sender_cloned.send(event).unwrap();
+                            match receive_message_raw(&mut stream).await {
+                                Ok(message_raw) => {
+                                    // Received all the message successfully!
+                                    let message: R =
+                                        rmp_serde::decode::from_slice(&message_raw).unwrap();
+                                    let event = ClientEvent::Message(message);
+                                    receiving_sender_cloned.send(event).unwrap();
+                                }
+                                Err(ReadToEndError::Read(ReadError::ConnectionLost(error))) => {
+                                    // Oh we lost the connection in the middle of receiving
+                                    // the message.
+                                    let event = connection_error_to_client_event(error);
+                                    if let Some(event) = event {
+                                        receiving_sender_cloned.send(event).unwrap();
+                                    }
+                                }
+                                Err(error) => {
+                                    // TODO: Handle more errors to pass as events to the user.
+                                    panic!("{error}");
+                                }
+                            }
                         });
                     }
-                    Err(ConnectionError::ApplicationClosed(_thingy)) => {
-                        // TODO: Deserialize the reason from `_thingy` and put it in the event.
-                        let event = ClientEvent::Disconnected(ClientDisconnectionDetails::None);
-                        receiving_sender.send(event).unwrap();
-                        return;
-                    }
-                    Err(ConnectionError::ConnectionClosed(_thingy)) => {
-                        // TODO: Deserialize the reason from `_thingy` and put it in the event.
-                        let event = ClientEvent::Disconnected(ClientDisconnectionDetails::None);
-                        receiving_sender.send(event).unwrap();
-                        return;
-                    }
-                    Err(ConnectionError::LocallyClosed) => {
-                        // Our own side have closed the connection, let's just wrap up as expected.
-                        return;
-                    }
-                    Err(ConnectionError::TimedOut) => {
-                        let event = ClientEvent::Disconnected(ClientDisconnectionDetails::Timeout);
-                        receiving_sender.send(event).unwrap();
-                        return;
-                    }
                     Err(error) => {
-                        // TODO: Handle more errors to pass as events to the user.
-                        panic!("{error}");
+                        // We just lost the connection.
+                        let event = connection_error_to_client_event(error);
+                        if let Some(event) = event {
+                            receiving_sender.send(event).unwrap();
+                        }
+                        return;
                     }
                 }
             }
