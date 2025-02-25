@@ -265,14 +265,14 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
                                     let message: R =
                                         rmp_serde::decode::from_slice(&message_raw).unwrap();
                                     let event = ClientOnServerEvent::Message(message);
-                                    receiving_sender_cloned.send(event).unwrap();
+                                    let _ = receiving_sender_cloned.send(event);
                                 }
                                 Err(ReadToEndError::Read(ReadError::ConnectionLost(error))) => {
                                     // Oh we lost the connection in the middle of receiving
                                     // the message.
                                     let event = connection_error_to_client_on_server_event(error);
                                     if let Some(event) = event {
-                                        receiving_sender_cloned.send(event).unwrap();
+                                        let _ = receiving_sender_cloned.send(event);
                                     }
                                 }
                                 Err(error) => {
@@ -286,7 +286,7 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
                         // We just lost the connection.
                         let event = connection_error_to_client_on_server_event(error);
                         if let Some(event) = event {
-                            receiving_sender.send(event).unwrap();
+                            let _ = receiving_sender.send(event);
                         }
                         return;
                     }

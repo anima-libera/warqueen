@@ -1,4 +1,10 @@
 
+## 0.4.6
+
+### Fixed
+
+- Removed unnecessary unwraps on results from event sendings across channels that happens on listening tasks for converting streams into message events, for both sides (server and client).
+
 ## 0.4.5
 
 ### Fixed
