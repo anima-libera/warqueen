@@ -1,6 +1,7 @@
 use std::{
     marker::PhantomData,
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    num::NonZeroUsize,
     sync::{mpsc::Receiver, Arc, Barrier},
 };
 
@@ -24,6 +25,10 @@ mod cerificate_verifier {
 
     use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
+    /// This verifier does not bother verifying anything and just validates any server.
+    ///
+    /// This is bad security, but is also very simple,
+    /// and also the only option for now (indeed warqueen is not even hobby-grade).
     #[derive(Debug)]
     pub struct EveryoneIsValid(Arc<rustls::crypto::CryptoProvider>);
 
@@ -139,7 +144,7 @@ enum ClientNetworkingEnum<S: NetSend, R: NetReceive> {
 enum WhoClosed {
     Us,
     // Note: It seems that when the peer closes we just let the connection notice it
-    // and it just works, so this is never constricted yet.
+    // and it just works, so this is never constructed yet.
     // It might be useful later though and should be kept around.
     #[allow(unused)]
     ThePeer,
@@ -160,19 +165,23 @@ enum WhoClosed {
 pub struct ClientNetworking<S: NetSend, R: NetReceive>(ClientNetworkingEnum<S, R>);
 
 impl<S: NetSend, R: NetReceive> ClientNetworkingConnecting<S, R> {
-    fn new(server_address: SocketAddr) -> ClientNetworkingConnecting<S, R> {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .unwrap();
+    fn new(
+        server_address: SocketAddr,
+        thread_count: Option<NonZeroUsize>,
+    ) -> ClientNetworkingConnecting<S, R> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let async_runtime_handle = async_runtime();
+        let async_runtime_handle = async_runtime(thread_count);
+        let async_runtime_handle_cloned = async_runtime_handle.clone();
 
         let (connected_client_sender, connected_client_receiver) = oneshot::channel();
 
-        let async_runtime_handle_cloned = async_runtime_handle.clone();
+        const PORT_UNSPECIFIED: u16 = 0;
+        const SOCKET_ADDRESS_UNSPECIFIED: SocketAddr =
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, PORT_UNSPECIFIED));
 
         async_runtime_handle.spawn(async move {
-            let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
+            let mut endpoint = Endpoint::client(SOCKET_ADDRESS_UNSPECIFIED).unwrap();
 
             endpoint.set_default_client_config(ClientConfig::new(Arc::new(
                 QuicClientConfig::try_from(
@@ -351,9 +360,12 @@ impl<S: NetSend, R: NetReceive> ClientNetworkingConnected<S, R> {
 
 impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
     /// Connects to the server at the given address.
-    pub fn new(server_address: SocketAddr) -> ClientNetworking<S, R> {
+    pub fn new(
+        server_address: SocketAddr,
+        thread_count: Option<NonZeroUsize>,
+    ) -> ClientNetworking<S, R> {
         ClientNetworking(ClientNetworkingEnum::Connecting(
-            ClientNetworkingConnecting::new(server_address),
+            ClientNetworkingConnecting::new(server_address, thread_count),
         ))
     }
 
@@ -404,7 +416,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
     /// impl NetSend for MessageClientToServer {}
     ///
     /// # let server_address = "127.0.0.1:21001".parse().unwrap();
-    /// let mut client = ClientNetworking::new(server_address);
+    /// let mut client = ClientNetworking::new(server_address, None);
     ///
     /// client.send_message_to_server(MessageClientToServer::Hello);
     /// #
@@ -460,7 +472,7 @@ impl<S: NetSend, R: NetReceive> ClientNetworking<S, R> {
     /// impl NetReceive for MessageServerToClient {}
     ///
     /// # let server_address = "127.0.0.1:21001".parse().unwrap();
-    /// let mut client = ClientNetworking::new(server_address);
+    /// let mut client = ClientNetworking::new(server_address, None);
     ///
     /// loop {
     ///     while let Some(event) = client.poll_event_from_server() {

@@ -1,5 +1,4 @@
 use std::{
-    net::{IpAddr, Ipv4Addr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -75,7 +74,7 @@ fn client() {
     // in threads and all, it is already in an Arc.
 
     let server_address = "127.0.0.1:21001".parse().unwrap();
-    let mut client = ClientNetworking::new(server_address);
+    let mut client = ClientNetworking::new(server_address, None);
 
     let mut last_sent_time = Instant::now();
 
@@ -141,8 +140,7 @@ fn client() {
 
 fn server() {
     let desired_port = 21001;
-    let address = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-    let server_listener = ServerListenerNetworking::new(address, desired_port);
+    let server_listener = ServerListenerNetworking::new(Some(desired_port), None, None);
     let actual_port = server_listener.server_port();
     println!("Opened on port {actual_port}");
 

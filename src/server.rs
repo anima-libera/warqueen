@@ -1,6 +1,7 @@
 use std::{
     marker::PhantomData,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
+    num::NonZeroUsize,
     sync::{mpsc::Receiver, Arc, Barrier},
 };
 
@@ -39,64 +40,86 @@ pub struct ServerListenerNetworking<S: NetSend, R: NetReceive> {
 }
 
 impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
-    /// Opens a `ServerListenerNetworking` on the given desired port hopefully.
+    /// Opens a `ServerListenerNetworking`.
     ///
-    /// The port actually used may be different from the desired port,
-    /// see [`ServerListenerNetworking::server_port`].
-    pub fn new(address: IpAddr, desired_port: u16) -> ServerListenerNetworking<S, R> {
+    /// Providing a desired port will make the socket use that port if possible,
+    /// although it might not be availabe and port that follow will be tried
+    /// until one is available.
+    ///
+    /// Always use [`ServerListenerNetworking::server_port`]
+    /// to know for sure what port is actually used.
+    pub fn new(
+        desired_port: Option<u16>,
+        address: Option<IpAddr>,
+        thread_count: Option<NonZeroUsize>,
+    ) -> ServerListenerNetworking<S, R> {
         rustls::crypto::ring::default_provider()
             .install_default()
             .unwrap();
 
-        let async_runtime_handle = async_runtime();
+        let async_runtime_handle = async_runtime(thread_count);
+        let async_runtime_handle_cloned = async_runtime_handle.clone();
 
         let (client_sender, client_receiver) = std::sync::mpsc::channel();
 
-        let cert = rcgen::generate_simple_self_signed(vec![SERVER_NAME.into()]).unwrap();
-        let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
-        let certs = vec![cert.cert.into()];
-        let key = key.into();
-        let server_crypto = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .unwrap();
-        let server_config = quinn::ServerConfig::with_crypto(Arc::new(
-            QuicServerConfig::try_from(server_crypto).unwrap(),
-        ));
-
-        // `std::net::UdpSocket::bind` can try multiple addresses until one works.
-        // Hopefully the port `desired_port` is available, but if not then we just try the port
-        // that follows, and the next, etc., until we find an available one.
-        //
-        // The doc of this very function says that this is what might happen.
-        #[derive(Clone)]
-        struct AddressesToTry {
-            ip_addr: IpAddr,
-            next_port: u16,
-        }
-        impl Iterator for AddressesToTry {
-            type Item = SocketAddr;
-            fn next(&mut self) -> Option<SocketAddr> {
-                let port = self.next_port;
-                self.next_port = self.next_port.wrapping_add(1);
-                Some(SocketAddr::new(self.ip_addr, port))
-            }
-        }
-        impl ToSocketAddrs for AddressesToTry {
-            type Iter = AddressesToTry;
-            fn to_socket_addrs(&self) -> std::io::Result<AddressesToTry> {
-                Ok(self.clone())
-            }
-        }
-        let addresses_to_try = AddressesToTry {
-            ip_addr: address,
-            next_port: desired_port,
+        let server_config = {
+            let cert = rcgen::generate_simple_self_signed(vec![SERVER_NAME.into()]).unwrap();
+            let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()).into();
+            let certs = vec![cert.cert.into()];
+            let server_crypto = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certs, key)
+                .unwrap();
+            quinn::ServerConfig::with_crypto(Arc::new(
+                QuicServerConfig::try_from(server_crypto).unwrap(),
+            ))
         };
 
-        let socket = std::net::UdpSocket::bind(addresses_to_try).unwrap();
-        let actual_server_address = socket.local_addr().unwrap();
+        let socket = if let Some(desired_port) = desired_port {
+            // We have a desired port to try in priority,
+            // but if we just pass it to `bind` and it fails then that would be it.
+            //
+            // `std::net::UdpSocket::bind` can try multiple socket addresses until one works.
+            // If the desired port is not available then we just try the port that follows,
+            // and the next, etc., until we find an available port that is hopefully not too far.
+            //
+            // The doc of this very function says that this is what might happen.
+            #[derive(Clone)]
+            struct SocketAddrsToTry {
+                ip_addr: IpAddr,
+                next_port: u16,
+            }
+            impl Iterator for SocketAddrsToTry {
+                type Item = SocketAddr;
+                fn next(&mut self) -> Option<SocketAddr> {
+                    let port = self.next_port;
+                    self.next_port = self.next_port.wrapping_add(1);
+                    Some(SocketAddr::new(self.ip_addr, port))
+                }
+            }
+            impl ToSocketAddrs for SocketAddrsToTry {
+                type Iter = SocketAddrsToTry;
+                fn to_socket_addrs(&self) -> std::io::Result<SocketAddrsToTry> {
+                    Ok(self.clone())
+                }
+            }
+            let addresses_to_try = SocketAddrsToTry {
+                ip_addr: address.unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+                next_port: desired_port,
+            };
+            std::net::UdpSocket::bind(addresses_to_try).unwrap()
+        } else {
+            // There is no desired port specified,
+            // we use the wildcard port and be done with it.
+            const PORT_UNSPECIFIED: u16 = 0;
+            let socket_address = SocketAddr::new(
+                address.unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+                PORT_UNSPECIFIED,
+            );
+            std::net::UdpSocket::bind(socket_address).unwrap()
+        };
 
-        let async_runtime_handle_cloned = async_runtime_handle.clone();
+        let actual_server_address = socket.local_addr().unwrap();
 
         async_runtime_handle.spawn(async move {
             // Basically `Endpoint::server` except we made the socket ourselves
@@ -162,8 +185,7 @@ impl<S: NetSend, R: NetReceive> ServerListenerNetworking<S, R> {
     /// # impl NetReceive for MessageClientToServer {}
     /// #
     /// # let port = 21001;
-    /// # let our_own_address = std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
-    /// let server = ServerListenerNetworking::new(our_own_address, port);
+    /// let server = ServerListenerNetworking::new(Some(port), None, None);
     ///
     /// loop {
     ///     while let Some(new_client) = server.poll_client() {
@@ -331,8 +353,7 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
     /// # impl NetReceive for MessageClientToServer {}
     /// #
     /// # let port = 21001;
-    /// # let our_own_address = std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
-    /// # let server = ServerListenerNetworking::new(our_own_address, port);
+    /// # let server = ServerListenerNetworking::new(Some(port), None, None);
     /// let client = server.poll_client().unwrap();
     ///
     /// client.send_message_to_client(MessageServerToClient::Hello);
@@ -375,8 +396,7 @@ impl<S: NetSend, R: NetReceive> ClientOnServerNetworking<S, R> {
     /// impl NetReceive for MessageClientToServer {}
     ///
     /// # let port = 21001;
-    /// # let our_own_address = std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
-    /// # let server = ServerListenerNetworking::new(our_own_address, port);
+    /// # let server = ServerListenerNetworking::new(Some(port), None, None);
     /// let client = server.poll_client().unwrap();
     ///
     /// loop {

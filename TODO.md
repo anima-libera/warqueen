@@ -8,7 +8,6 @@
   - Make diconnecting accept a `Vec<OrderingConstraint>` to allow making sure that some messages arrive before the connection closes. *(Better alternative)*
 - Return errors instead of panicking in cases where the problem is not a warqueen bug that should never happen.
 - See that connections are kept alive even when no messages are being exchanged.
-- Allow to configure the async runtime to use more than one thread.
 - Add a method to `DisconnectionHandle` that says in a non-blocking way if the disconnection has finished. Requires using an `AtomicBool` (maybe not instead of the `Barrier` but maybe in addition to it).
 - Take a look at the certification and cryptography stuff offered by Quinn and allow to enable it.
 - More simple examples.

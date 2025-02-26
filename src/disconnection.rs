@@ -82,7 +82,7 @@ impl DisconnectionHandle {
             } else {
                 println!(
                     "Warning: `ClientDisconnectionHandle::wait_for_proper_disconnection` \
-					should be called in the main thread, see documentation as to why"
+                    should be called in the main thread, see documentation as to why"
                 )
             }
         }
@@ -96,13 +96,13 @@ impl Drop for DisconnectionHandle {
                 if !std::thread::panicking() {
                     panic!(
                         "`ClientDisconnectionHandle` dropped \
-						instead of being intentionally waited for"
+                        instead of being intentionally waited for"
                     );
                 }
             } else {
                 println!(
                     "Warning: `ClientDisconnectionHandle` dropped \
-					instead of being intentionally waited for"
+                    instead of being intentionally waited for"
                 );
                 Self::check_that_we_are_on_the_main_thread();
                 self.actually_wait_for_proper_disconnection();

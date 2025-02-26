@@ -5,6 +5,12 @@
 
 - Removed unnecessary unwraps on results from event sendings across channels that happens on listening tasks for converting streams into message events, for both sides (server and client).
 
+### Added
+
+- Added an optional thread count parameter to both client and server that will make the async runtime used for networking run on a threadpool of the given size if any. Default remains 1.
+- Made specifying a socket address optional for server.
+- Made specifying a desired port number optional for server.
+
 ## 0.4.5
 
 ### Fixed
