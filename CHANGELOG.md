@@ -1,4 +1,10 @@
 
+## 0.4.8
+
+### Fixed
+
+- Upgraded dependencies to their latest versions.
+
 ## 0.4.7
 
 ### Fixed

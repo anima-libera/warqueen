@@ -204,7 +204,7 @@ fn server() {
 
         if last_sent_time.elapsed() > Duration::from_millis(2500) && !clients.is_empty() {
             last_sent_time = Instant::now();
-            let random_client_index = rand::thread_rng().gen_range(0..clients.len());
+            let random_client_index = rand::rng().random_range(0..clients.len());
 
             let (client, client_id) = &clients[random_client_index];
             println!("We say \"uwu\" to the client {client_id}");

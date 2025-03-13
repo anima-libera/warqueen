@@ -159,7 +159,7 @@ fn server() {
         // Periodically sending a message to a random client for the sake of the example.
         if last_sent_time.elapsed() > Duration::from_millis(2500) && !clients.is_empty() {
             last_sent_time = Instant::now();
-            let random_client_index = rand::thread_rng().gen_range(0..clients.len());
+            let random_client_index = rand::rng().random_range(0..clients.len());
 
             // Sending a message to a client.
             let (client, client_id) = &clients[random_client_index];
