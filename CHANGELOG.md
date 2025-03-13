@@ -1,4 +1,10 @@
 
+## 0.4.7
+
+### Fixed
+
+- Disabled `rustls`'s `aws_lc_rs` feature, `ring` seems good enough for the scope of warqueen and `aws_lc_rs` depends on `aws-lc-sys` which seem to complicate the build process (that sometimes fail).
+
 ## 0.4.6
 
 ### Fixed
